@@ -1,31 +1,103 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
+
+const SAAS_DEFAULT_BASE: &str = "https://api.saas.enterprise.zetaris.com";
+
+/// Which Zetaris surface the configured URL points at.
+///
+/// - `Gateway`: the managed-cluster UI proxy on the Gateway origin
+///   (`/api/proxy/...`), used by the getting-started coding clients.
+/// - `Rest`: the documented REST API (`/api/v1.0/sql-editor/sqls/run`).
+/// - `Saas`: the Cloud SaaS API (`/api/v1.0/query/sql/start`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiStyle {
+    Gateway,
+    Rest,
+    Saas,
+}
+
+impl ApiStyle {
+    fn parse(value: Option<&str>) -> Self {
+        match value {
+            Some("rest") | Some("self_managed") | Some("self-managed") => Self::Rest,
+            Some("saas") => Self::Saas,
+            _ => Self::Gateway,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Gateway => "gateway",
+            Self::Rest => "rest",
+            Self::Saas => "saas",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum Auth {
+    Key(String),
+    User { username: String, password: String },
+}
 
 #[derive(Debug, Clone)]
 pub struct ZetarisConfig {
     pub base_url: String,
-    pub api_key: String,
-    pub org_id: String,
+    pub org_id: Option<String>,
+    pub style: ApiStyle,
     pub project_table: String,
     pub evidence_table: String,
+    auth: Auth,
 }
 
 impl ZetarisConfig {
     pub fn from_env() -> Option<Self> {
-        let base_url = std::env::var("ZETARIS_BASE_URL").ok().filter(|s| !s.is_empty())?;
-        let api_key = std::env::var("ZETARIS_API_KEY").ok().filter(|s| !s.is_empty())?;
-        let org_id = std::env::var("ZETARIS_ORG_ID").ok().filter(|s| !s.is_empty())?;
-        let project_table = std::env::var("ZETARIS_PROJECT_TABLE").unwrap_or_else(|_| "project_lines".into());
-        let evidence_table = std::env::var("ZETARIS_EVIDENCE_TABLE").unwrap_or_else(|_| "evidence_extracts".into());
+        let style = ApiStyle::parse(std::env::var("ZETARIS_API_STYLE").ok().as_deref());
+        let org_id = std::env::var("ZETARIS_ORG_ID").ok().filter(|s| !s.is_empty());
+        let auth = match std::env::var("ZETARIS_API_KEY").ok().filter(|s| !s.is_empty()) {
+            Some(key) => Auth::Key(key),
+            None => {
+                let username = std::env::var("ZETARIS_USERNAME").ok().filter(|s| !s.is_empty())?;
+                let password = std::env::var("ZETARIS_PASSWORD").ok().filter(|s| !s.is_empty())?;
+                Auth::User { username, password }
+            }
+        };
+        let base_url = std::env::var("ZETARIS_BASE_URL")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| match style {
+                ApiStyle::Saas => SAAS_DEFAULT_BASE.to_string(),
+                _ => String::new(),
+            });
+        if base_url.is_empty() {
+            return None;
+        }
         Some(Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
-            api_key,
+            base_url: normalize_base(&base_url, style),
             org_id,
-            project_table,
-            evidence_table,
+            style,
+            project_table: std::env::var("ZETARIS_PROJECT_TABLE").unwrap_or_else(|_| "project_lines".into()),
+            evidence_table: std::env::var("ZETARIS_EVIDENCE_TABLE").unwrap_or_else(|_| "evidence_extracts".into()),
+            auth,
         })
     }
+
+    fn org_header(&self) -> Result<&str, String> {
+        self.org_id
+            .as_deref()
+            .ok_or_else(|| "ZETARIS_ORG_ID is required for this API style.".to_string())
+    }
+}
+
+fn normalize_base(value: &str, style: ApiStyle) -> String {
+    let mut trimmed = value.trim().trim_end_matches('/').to_string();
+    if style != ApiStyle::Rest {
+        if let Some(stripped) = trimmed.strip_suffix("/api/v1.0") {
+            trimmed = stripped.to_string();
+        }
+    }
+    trimmed
 }
 
 #[derive(Debug, Serialize)]
@@ -35,6 +107,7 @@ pub struct ZetarisStatus {
     pub detail: String,
     pub request_id: Option<String>,
     pub live: bool,
+    pub style: String,
 }
 
 pub fn join_sql(project_table: &str, evidence_table: &str, case_id: &str) -> Result<String, String> {
@@ -50,7 +123,13 @@ pub fn join_sql(project_table: &str, evidence_table: &str, case_id: &str) -> Res
     ))
 }
 
-pub fn run_body(sql: &str, limit: u32) -> Value {
+/// SaaS OpenSqlRequest body, per the published OpenAPI document.
+pub fn saas_start_body(sql: &str, page_limit: u32) -> Value {
+    json!({ "select": sql, "pageLimit": page_limit.clamp(1, 100) })
+}
+
+/// Documented REST API body (`POST /api/v1.0/sql-editor/sqls/run`).
+pub fn rest_body(sql: &str, limit: u32) -> Value {
     json!({
         "queryId": Uuid::new_v4().to_string(),
         "sql": sql,
@@ -59,8 +138,16 @@ pub fn run_body(sql: &str, limit: u32) -> Value {
     })
 }
 
+/// Gateway proxy body (`POST /api/proxy/sql-editor/sqls/run-query`).
+pub fn gateway_body(sql: &str, limit: u32) -> Value {
+    json!({ "sql": sql, "limit": limit })
+}
+
 fn ident(value: &str) -> Result<String, String> {
-    if value.len() > 64 || !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || value.starts_with(|c: char| c.is_ascii_digit()) {
+    if value.len() > 64
+        || !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || value.starts_with(|c: char| c.is_ascii_digit())
+    {
         return Err("Zetaris table names must be simple identifiers.".into());
     }
     Ok(value.to_string())
@@ -73,75 +160,226 @@ fn case_id_literal(value: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
-#[derive(Debug, Deserialize)]
-struct DatasourceResponse {
-    #[serde(default)]
-    datasources: Vec<Value>,
+fn safe_query_token(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= 200
+        && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn safe_token(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= 4096
+        && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~')
+}
+
+impl ZetarisConfig {
+    async fn token(&self, http: &reqwest::Client) -> Result<String, String> {
+        match &self.auth {
+            Auth::Key(key) => Ok(key.clone()),
+            Auth::User { username, password } => {
+                let response = http
+                    .post(format!("{}/api/auth/login", self.base_url))
+                    .header("X-Request-ID", Uuid::new_v4().to_string())
+                    .json(&json!({ "username": username, "password": password }))
+                    .send()
+                    .await
+                    .map_err(|err| format!("Zetaris login failed: {err}"))?;
+                let status = response.status();
+                if !status.is_success() {
+                    return Err(format!("Zetaris login returned HTTP {status}. Check ZETARIS_USERNAME and ZETARIS_PASSWORD."));
+                }
+                let body: Value = response.json().await.map_err(|err| format!("Zetaris login response was unreadable: {err}"))?;
+                let token = body
+                    .get("idToken")
+                    .or_else(|| body.get("token"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if !safe_token(token) {
+                    return Err("Zetaris login did not return an idToken.".into());
+                }
+                Ok(token.to_string())
+            }
+        }
+    }
+
+    fn auth_headers(
+        &self,
+        request: reqwest::RequestBuilder,
+        token: &str,
+        request_id: &str,
+    ) -> Result<reqwest::RequestBuilder, String> {
+        let mut request = request
+            .header("Authorization", format!("Bearer {token}"))
+            .header("X-Request-ID", request_id);
+        if let Some(org) = &self.org_id {
+            request = request.header("X-Org-ID", org);
+        }
+        Ok(request)
+    }
 }
 
 pub async fn check(config: &ZetarisConfig, http: &reqwest::Client) -> ZetarisStatus {
     let request_id = Uuid::new_v4().to_string();
-    let url = format!("{}/api/v1.0/datasource/datasources", config.base_url);
-    let response = http
-        .get(url)
-        .header("Authorization", format!("Bearer {}", config.api_key))
-        .header("X-Org-ID", &config.org_id)
-        .header("X-Request-ID", &request_id)
-        .send()
-        .await;
-    match response {
-        Ok(res) if res.status().is_success() => {
-            let count = res
-                .json::<DatasourceResponse>()
-                .await
-                .map(|body| body.datasources.len())
-                .unwrap_or(0);
-            ZetarisStatus {
-                state: "connected".into(),
-                detail: format!("Live datasource list returned {count} entries."),
-                request_id: Some(request_id),
-                live: true,
-            }
+    let result = async {
+        let token = config.token(http).await?;
+        let path = match config.style {
+            ApiStyle::Gateway => "/api/proxy/lightning-database/databases",
+            ApiStyle::Rest => "/datasource/datasources",
+            ApiStyle::Saas => "/api/v1.0/datamart",
+        };
+        if config.style == ApiStyle::Rest {
+            let _ = config.org_header()?;
         }
-        Ok(res) => ZetarisStatus {
-            state: "error".into(),
-            detail: format!("Zetaris returned HTTP {}.", res.status()),
+        let request = http.get(format!("{}{path}", config.base_url));
+        let request = config.auth_headers(request, &token, &request_id)?;
+        let response = request.send().await.map_err(|err| format!("Zetaris could not be reached: {err}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let hint = match status.as_u16() {
+                401 | 403 => "The API key or login token was rejected.",
+                400 => "The organisation id or request shape was rejected.",
+                404 => "The API path was not found at this base URL.",
+                _ => "Check the workspace URL and credentials.",
+            };
+            return Err(format!("Zetaris {} API returned HTTP {status}. {hint}", config.style.name()));
+        }
+        let body: Value = response.json().await.unwrap_or(Value::Null);
+        let count = body
+            .as_array()
+            .map(|a| a.len())
+            .or_else(|| body.get("data").and_then(|v| v.as_array()).map(|a| a.len()))
+            .or_else(|| body.get("datasources").and_then(|v| v.as_array()).map(|a| a.len()))
+            .unwrap_or(0);
+        Ok::<usize, String>(count)
+    }
+    .await;
+    match result {
+        Ok(count) => ZetarisStatus {
+            state: "connected".into(),
+            detail: format!(
+                "Live Zetaris {} API answered; {count} entries returned.",
+                config.style.name()
+            ),
             request_id: Some(request_id),
-            live: false,
+            live: true,
+            style: config.style.name().into(),
         },
-        Err(err) => ZetarisStatus {
+        Err(detail) => ZetarisStatus {
             state: "error".into(),
-            detail: format!("Zetaris could not be reached: {err}"),
+            detail,
             request_id: Some(request_id),
             live: false,
+            style: config.style.name().into(),
         },
     }
 }
 
 pub async fn query_join(config: &ZetarisConfig, http: &reqwest::Client, case_id: &str) -> Result<ZetarisQuery, String> {
     let sql = join_sql(&config.project_table, &config.evidence_table, case_id)?;
+    match config.style {
+        ApiStyle::Gateway => query_gateway(config, http, sql).await,
+        ApiStyle::Rest => query_rest(config, http, sql).await,
+        ApiStyle::Saas => query_saas(config, http, sql).await,
+    }
+}
+
+async fn query_gateway(config: &ZetarisConfig, http: &reqwest::Client, sql: String) -> Result<ZetarisQuery, String> {
+    let token = config.token(http).await?;
     let request_id = Uuid::new_v4().to_string();
-    let body = run_body(&sql, 100);
-    let url = format!("{}/api/v1.0/sql-editor/sqls/run", config.base_url);
-    let response = http
-        .post(url)
-        .header("Authorization", format!("Bearer {}", config.api_key))
-        .header("X-Org-ID", &config.org_id)
-        .header("X-Request-ID", &request_id)
-        .json(&body)
+    let request = http.post(format!("{}/api/proxy/sql-editor/sqls/run-query", config.base_url));
+    let request = config.auth_headers(request, &token, &request_id)?;
+    let response = request
+        .json(&gateway_body(&sql, 100))
         .send()
         .await
         .map_err(|err| format!("Zetaris query failed: {err}"))?;
     let status = response.status();
-    let text = response.text().await.map_err(|err| err.to_string())?;
+    let body: Value = response.json().await.map_err(|err| format!("Zetaris returned an unreadable response: {err}"))?;
     if !status.is_success() {
-        return Err(format!("Zetaris query returned HTTP {status}."));
+        return Err(format!("Zetaris gateway query returned HTTP {status}."));
     }
+    let rows = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .or_else(|| body.get("rows").and_then(|v| v.as_array()))
+        .cloned()
+        .unwrap_or_default();
     Ok(ZetarisQuery {
         request_id,
         sql,
-        body: text.chars().take(4000).collect(),
+        total_count: rows.len() as i64,
+        record_sample: rows.into_iter().take(5).collect(),
         live: true,
+        style: "gateway".into(),
+        query_closed: true,
+    })
+}
+
+async fn query_rest(config: &ZetarisConfig, http: &reqwest::Client, sql: String) -> Result<ZetarisQuery, String> {
+    let token = config.token(http).await?;
+    let _ = config.org_header()?;
+    let request_id = Uuid::new_v4().to_string();
+    let request = http.post(format!("{}/sql-editor/sqls/run", config.base_url));
+    let request = config.auth_headers(request, &token, &request_id)?;
+    let response = request
+        .json(&rest_body(&sql, 100))
+        .send()
+        .await
+        .map_err(|err| format!("Zetaris query failed: {err}"))?;
+    let status = response.status();
+    let body: Value = response.json().await.map_err(|err| format!("Zetaris returned an unreadable response: {err}"))?;
+    if !status.is_success() {
+        return Err(format!("Zetaris REST query returned HTTP {status}."));
+    }
+    let rows = body.get("data").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    Ok(ZetarisQuery {
+        request_id,
+        sql,
+        total_count: rows.len() as i64,
+        record_sample: rows.into_iter().take(5).collect(),
+        live: true,
+        style: "rest".into(),
+        query_closed: true,
+    })
+}
+
+async fn query_saas(config: &ZetarisConfig, http: &reqwest::Client, sql: String) -> Result<ZetarisQuery, String> {
+    let token = config.token(http).await?;
+    let _ = config.org_header()?;
+    let request_id = Uuid::new_v4().to_string();
+    let request = http.post(format!("{}/api/v1.0/query/sql/start", config.base_url));
+    let request = config.auth_headers(request, &token, &request_id)?;
+    let response = request
+        .json(&saas_start_body(&sql, 100))
+        .send()
+        .await
+        .map_err(|err| format!("Zetaris query failed: {err}"))?;
+    let status = response.status();
+    let body: Value = response.json().await.map_err(|err| format!("Zetaris returned an unreadable response: {err}"))?;
+    if !status.is_success() {
+        return Err(format!("Zetaris SaaS query returned HTTP {status}."));
+    }
+    let token = body.get("queryToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let total = body.get("totalCount").and_then(|v| v.as_i64()).unwrap_or(0);
+    let records = body.get("records").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let closed = if safe_query_token(&token) {
+        let close = http.delete(format!("{}/api/v1.0/query/sql/close/{token}", config.base_url));
+        let close = config.auth_headers(close, &token, &Uuid::new_v4().to_string()).ok();
+        match close {
+            Some(request) => request.send().await.map(|r| r.status().is_success()).unwrap_or(false),
+            None => false,
+        }
+    } else {
+        false
+    };
+    Ok(ZetarisQuery {
+        request_id,
+        sql,
+        total_count: total,
+        record_sample: records.into_iter().take(5).collect(),
+        live: true,
+        style: "saas".into(),
+        query_closed: closed,
     })
 }
 
@@ -150,16 +388,20 @@ pub async fn query_join(config: &ZetarisConfig, http: &reqwest::Client, case_id:
 pub struct ZetarisQuery {
     pub request_id: String,
     pub sql: String,
-    pub body: String,
+    pub total_count: i64,
+    pub record_sample: Vec<Value>,
     pub live: bool,
+    pub style: String,
+    pub query_closed: bool,
 }
 
 pub fn not_configured() -> ZetarisStatus {
     ZetarisStatus {
         state: "not_configured".into(),
-        detail: "AWS quickstart callback succeeded, but ZETARIS_BASE_URL, ZETARIS_API_KEY, and ZETARIS_ORG_ID are not set. No live query was sent.".into(),
+        detail: "AWS quickstart callback succeeded, but no Zetaris Gateway URL plus API key or login is configured. No live query was sent.".into(),
         request_id: None,
         live: false,
+        style: "gateway".into(),
     }
 }
 
@@ -172,20 +414,57 @@ mod tests {
         let sql = join_sql("project_lines", "evidence_extracts", "harbor-annex").unwrap();
         assert!(sql.contains("LEFT JOIN evidence_extracts"));
         assert!(sql.contains("harbor-annex"));
-        assert!(sql.contains("\"source\":") == false);
+        assert!(!sql.contains("${"));
     }
 
     #[test]
     fn rejects_injected_table_names() {
         assert!(join_sql("project_lines; drop", "evidence_extracts", "harbor-annex").is_err());
         assert!(join_sql("project_lines", "evidence_extracts", "harbor' OR 1=1").is_err());
+        assert!(join_sql("1project", "evidence", "x").is_err());
     }
 
     #[test]
-    fn run_body_matches_the_documented_rest_shape() {
-        let body = run_body("select 1", 25);
+    fn saas_body_matches_the_published_schema() {
+        let body = saas_start_body("select 1", 500);
+        assert_eq!(body["select"], "select 1");
+        assert_eq!(body["pageLimit"], 100);
+        assert!(body.get("sql").is_none());
+    }
+
+    #[test]
+    fn gateway_body_matches_the_proxy_contract() {
+        let body = gateway_body("select 1", 100);
+        assert_eq!(body["sql"], "select 1");
+        assert_eq!(body["limit"], 100);
+        assert!(body.get("queryId").is_none());
+    }
+
+    #[test]
+    fn rest_body_matches_the_documented_contract() {
+        let body = rest_body("select 1", 25);
         assert_eq!(body["source"], "SqlEditor");
         assert_eq!(body["limit"], 25);
-        assert!(body["queryId"].as_str().unwrap().len() > 10);
+    }
+
+    #[test]
+    fn style_parsing_defaults_to_gateway() {
+        assert_eq!(ApiStyle::parse(None), ApiStyle::Gateway);
+        assert_eq!(ApiStyle::parse(Some("rest")), ApiStyle::Rest);
+        assert_eq!(ApiStyle::parse(Some("saas")), ApiStyle::Saas);
+    }
+
+    #[test]
+    fn base_url_is_normalized_per_style() {
+        assert_eq!(normalize_base("https://cluster.example/", ApiStyle::Gateway), "https://cluster.example");
+        assert_eq!(normalize_base("https://cluster.example/api/v1.0", ApiStyle::Gateway), "https://cluster.example");
+        assert_eq!(normalize_base("http://localhost:8888/api/v1.0/", ApiStyle::Rest), "http://localhost:8888/api/v1.0");
+    }
+
+    #[test]
+    fn tokens_are_bounded() {
+        assert!(safe_token("abc-123_XYZ.jwt"));
+        assert!(!safe_token("../close"));
+        assert!(!safe_token(""));
     }
 }

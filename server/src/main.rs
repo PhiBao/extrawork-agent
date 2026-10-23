@@ -522,7 +522,15 @@ async fn project_world(app: &App, case_id: &str) -> Result<(), String> {
     let nemotron = nemotron_status(app, &view).await;
     let zetaris = if let Some(config) = &app.zetaris {
         match zetaris::query_join(config, &app.http, case_id).await {
-            Ok(query) => json!({"state": "connected", "live": true, "requestId": query.request_id, "sql": query.sql}),
+            Ok(query) => json!({
+                "state": "connected",
+                "live": true,
+                "style": query.style,
+                "requestId": query.request_id,
+                "totalCount": query.total_count,
+                "recordSample": query.record_sample,
+                "queryClosed": query.query_closed
+            }),
             Err(err) => json!({"state": "error", "live": false, "detail": err}),
         }
     } else {

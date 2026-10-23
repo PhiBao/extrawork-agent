@@ -9,7 +9,10 @@ echo "== Meterless conformance suite"
 (cd meterless-world && pnpm conformance)
 echo "== Frontend typecheck and build"
 (cd web && pnpm build)
-echo "== HTTP smoke test (requires a running server on 127.0.0.1:8081)"
-curl -sf http://127.0.0.1:8081/api/health >/dev/null && echo "health ok"
-curl -sf http://127.0.0.1:8081/api/cases/harbor-annex | grep -q '"proposalCents":580000' && echo "golden case ok"
+echo "== HTTP end-to-end (requires a running server on 127.0.0.1:8081)"
+if curl -sf http://127.0.0.1:8081/api/health >/dev/null; then
+  ./scripts/e2e.sh
+else
+  echo "SKIP: server not running; start it with ./scripts/demo.sh"
+fi
 echo "ALL CHECKS PASSED"

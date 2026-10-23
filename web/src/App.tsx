@@ -32,7 +32,7 @@ type Doc = { id: string; filename: string; kind: string; sha256: string; text?: 
 type Proof = {
   joinMode?: string;
   joinDetail?: string;
-  zetaris?: { state?: string; detail?: string; live?: boolean; requestId?: string };
+  zetaris?: { state?: string; detail?: string; live?: boolean; requestId?: string; style?: string; totalCount?: number };
   meterless?: { state?: string; commit?: string; result?: { eventCount?: number; unchangedOnReplay?: boolean } };
   nemotron?: { state?: string; model?: string; detail?: string };
 };
@@ -223,8 +223,13 @@ export function App() {
       </div>
       <details className="proof">
         <summary>How this was checked</summary>
-        <p>{file.sourceAgreement} Evidence extracts were read from a separate CSV and joined to the project-line table. {file.proof?.zetaris?.detail ?? file.proof?.zetaris?.state}</p>
-        <p>World Model {file.proof?.meterless?.commit ?? "not recorded"} · {file.proof?.meterless?.state}. Replay unchanged: {String(file.proof?.meterless?.result?.unchangedOnReplay ?? "not run")}.</p>
+        <p>{file.sourceAgreement} Evidence extracts were read from a separate CSV and joined to the project-line table.</p>
+        <p>World Model {file.proof?.meterless?.commit?.slice(0, 12) ?? "not recorded"} · {file.proof?.meterless?.state}. Replay unchanged: {String(file.proof?.meterless?.result?.unchangedOnReplay ?? "not run")}.</p>
+        <p>
+          Zetaris · {file.proof?.zetaris?.state ?? "not run"}
+          {file.proof?.zetaris?.live ? ` · ${file.proof?.zetaris?.style ?? "live"}` : ""}
+          {file.proof?.zetaris?.detail ? ` — ${file.proof?.zetaris?.detail}` : ""}
+        </p>
         <p>{file.proof?.nemotron?.detail ?? "Rules engine read the objections."}</p>
       </details>
     </main>

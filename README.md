@@ -162,21 +162,40 @@ refusal behaviour and the visible state transitions.
 
 ### Zetaris integration
 
-ExtraWork has a real REST client for the documented Zetaris API:
+The client supports the three surfaces Zetaris actually publishes, selected by
+`ZETARIS_API_STYLE`:
 
-- `GET /api/v1.0/datasource/datasources` for health.
-- `POST /api/v1.0/sql-editor/sqls/run` with the documented
-  `{ queryId, sql, source: "SqlEditor", limit }` body for the join.
-- Bearer auth, numeric `X-Org-ID`, UUID `X-Request-ID`.
+| Style | Health | Join query |
+|---|---|---|
+| `gateway` (default) | `GET /api/proxy/lightning-database/databases` | `POST /api/proxy/sql-editor/sqls/run-query` with `{sql, limit}` |
+| `rest` | `GET /api/v1.0/datasource/datasources` | `POST /api/v1.0/sql-editor/sqls/run` with `{queryId, sql, source, limit}` |
+| `saas` | `GET /api/v1.0/datamart` | `POST /api/v1.0/query/sql/start` with `{select, pageLimit}`, then `DELETE /query/sql/close/{token}` |
 
-The join is a fixed template over two registered tables (`project_lines` and `evidence_extracts`),
-with identifier validation. No model writes SQL.
+The Gateway style is what a managed cluster exposes to coding clients; it accepts an API key or a
+username/password login at `/api/auth/login`. The join is a fixed template over two registered tables
+(`project_lines`, `evidence_extracts`) with identifier validation. No model writes SQL.
 
-**Current status:** the AWS quickstart stack `zetaris-main-9acdd8a3` (`ap-southeast-1`) completed and
-its callback returned 200. This environment has **no Zetaris query key, base URL, or org ID**, so the
-app does not claim a live query. It performs the same join locally across **two independently stored
-sources** — PostgreSQL project lines and a separate evidence CSV — and reports that truthfully in the
-proof panel. Set the three Zetaris variables to exercise the live path.
+**Current status:** the AWS quickstart stack `zetaris-main-9acdd8a3` (`ap-southeast-1`) is
+`CREATE_COMPLETE`, its callback returned 200, and the cross-account role has been used by the Zetaris
+control plane. **No Zetaris cluster is running in the account** (`eks list-clusters` is empty in every
+region, and there are no EC2 workloads), so no Gateway URL or API key exists here yet. The app does
+not claim a live query. It performs the same join locally across **two independently stored sources**
+— PostgreSQL project lines and a separate evidence CSV — and reports that truthfully in the proof
+panel.
+
+To connect the real workspace: create the cluster in Zetaris Cloud (`Compute > Clusters`), copy the
+Gateway URL and either an API key or the organisation credentials, then set:
+
+```bash
+ZETARIS_API_STYLE=gateway
+ZETARIS_BASE_URL=https://your-cluster-gateway
+ZETARIS_ORG_ID=...
+ZETARIS_API_KEY=...          # or ZETARIS_USERNAME + ZETARIS_PASSWORD
+```
+
+All three client paths are exercised over real HTTP against a contract mock
+(`scripts/mock_zetaris.py`); see `scripts/check.sh`. The mock is not Zetaris and is never presented as
+live vendor evidence.
 
 ### Meterless integration
 
@@ -310,11 +329,23 @@ For development, run the sidecar and backend in separate terminals, then `pnpm d
 
 Runs:
 
-- `cargo test --lib` — 11 domain/client tests.
+- `cargo test --lib` — 16 domain and client tests.
 - `pnpm test` in `meterless-world` — the World Model feature and replay assertions.
 - `pnpm conformance` — the upstream Meterless suite (8/8).
 - `pnpm build` — TypeScript check and production build.
-- HTTP smoke checks when the server is running.
+- `scripts/e2e.sh` — resets the case, accepts the duplicate, uploads the rate approval, checks totals,
+  exports, stale-revision rejection, unsupported-PDF rejection, and reset.
+
+Two optional verification scripts:
+
+```bash
+./scripts/e2e.sh             # against the running app
+./scripts/verify-zetaris.sh  # Zetaris Gateway client over HTTP, against the contract mock
+```
+
+`verify-zetaris.sh` starts a second app instance on port 8082 with the Gateway style and asserts the
+health call, the join, the row count, and the released query. It is a contract test, not vendor
+evidence.
 
 ### Environment
 
@@ -324,9 +355,11 @@ Runs:
 | `EXTRAWORK_ROOT` | yes in containers | Repository root for fixtures and `web/dist` |
 | `EXTRAWORK_BIND` | no | Defaults to `127.0.0.1:8081` |
 | `METERLESS_URL` | no | Defaults to `http://127.0.0.1:8091` |
+| `ZETARIS_API_STYLE` | no | `gateway` (default), `rest`, or `saas` |
 | `ZETARIS_BASE_URL` | no | Enables the live Zetaris path |
-| `ZETARIS_API_KEY` | no | Server-side only |
-| `ZETARIS_ORG_ID` | no | Numeric organisation id |
+| `ZETARIS_API_KEY` | no | Server-side only, or use username/password on Gateway |
+| `ZETARIS_USERNAME` / `ZETARIS_PASSWORD` | no | Gateway login alternative to an API key |
+| `ZETARIS_ORG_ID` | no | Numeric organisation id (required for REST and SaaS) |
 | `ZETARIS_PROJECT_TABLE` | no | Defaults to `project_lines` |
 | `ZETARIS_EVIDENCE_TABLE` | no | Defaults to `evidence_extracts` |
 | `NVIDIA_API_KEY` | no | Enables the hosted Nemotron call |
@@ -383,8 +416,8 @@ seeded records, clears decisions, and resets the evidence CSV.
 | Prompt injection cannot change the total | **Unit-tested** |
 | Meterless World Model engine used in a working feature | **Yes — projection on every revision, verified by test and conformance** |
 | World Model replay idempotent for the same projection | **Verified by test** |
-| Zetaris REST client and fixed join template | **Implemented; unit-tested for shape and identifier rejection** |
-| Live Zetaris query | **Not performed here — credentials absent** |
+| Zetaris client for Gateway, REST, and SaaS surfaces | **Implemented; tested against the published shapes and a local HTTP contract mock** |
+| Live Zetaris query | **Not performed here — no cluster or credentials in this account yet** |
 | AWS quickstart registration | **Verified: stack `CREATE_COMPLETE`, callback HTTP 200** |
 | Hosted Nemotron extraction | **Not performed here — key absent; rules engine used and labelled** |
 | Local two-source join (PostgreSQL + evidence CSV) | **Live in the demo** |

@@ -414,16 +414,14 @@ Try this order:
 A timed shot list and narration guardrails are in `docs/DEMO.md`. The submission deck is
 `docs/deck.html` (printable to PDF from a browser).
 
-A timed shot list and narration guardrails are in `docs/DEMO.md`. The submission deck is
-`docs/deck.html` (printable to PDF from a browser).
-
 ### What to look for as a judge
 
 - The amount changes only after a recorded decision.
-- Uploading a record changes one finding, not the whole narrative.
+- Uploading a record changes one finding, not the whole narrative; the **Last change** line names it.
 - The app never says the claim was paid or approved.
-- The World Model panel shows a real engine commit, event count, and replay equality.
-- The Zetaris panel is explicit when no live credentials are present.
+- The run strip shows the sequence: read, join, check, propose, flag.
+- The Zetaris strip shows the live join, row count, and the exact query.
+- The World Model shows a real engine commit, event count, and replay equality.
 
 ### Resetting
 

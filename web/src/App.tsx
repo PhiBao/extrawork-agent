@@ -94,6 +94,20 @@ function describeChange(before: CaseFile, next: CaseFile) {
   if (changed) {
     parts.push(`Objection 0${changed[0].index}: ${changed[0].status} → ${changed[1].status}`);
   }
+  if (!parts.length) {
+    const labels: Record<string, string> = {
+      accept: "correction accepted",
+      reject: "correction rejected",
+      request_approval: "approval request noted",
+      apply_sheet_rate: "sheet rate applied",
+    };
+    const decided = before.findings
+      .map((item) => [item, next.findings.find((candidate) => candidate.key === item.key)] as const)
+      .find(([oldItem, newItem]) => newItem && oldItem.decision !== newItem.decision);
+    if (decided?.[1]?.decision) {
+      parts.push(`${decided[0].title} — ${labels[decided[1].decision] ?? decided[1].decision}`);
+    }
+  }
   if (!parts.length && before.findings.length !== next.findings.length) {
     parts.push("Findings recomputed");
   }
@@ -361,7 +375,9 @@ export function App() {
           {tasks.length ? (
             <div className="task">
               <span className="status">Next request</span>
-              {tasks.map((task) => <p key={task.id}>{task.title}</p>)}
+              {tasks.map((task) => (
+                <p key={task.id}>{task.status === "requested" ? "Approval request noted." : task.title}</p>
+              ))}
             </div>
           ) : null}
           <table>
@@ -420,13 +436,27 @@ export function App() {
               <ul>
                 {file.findings
                   .filter((item) => !item.objectionId)
-                  .map((item) => (
-                    <li key={item.key}>
-                      <span className={`status ${item.state}`}>{item.state}</span>
-                      <strong>{item.title}</strong>
-                      <span>{item.explanation}</span>
-                    </li>
-                  ))}
+                  .map((item) => {
+                    const task = file.tasks.find((entry) => entry.findingKey === item.key);
+                    return (
+                      <li key={item.key}>
+                        <span className={`status ${item.state}`}>{item.state}</span>
+                        <strong>{item.title}</strong>
+                        <span>{item.explanation}</span>
+                        {task ? (
+                          <span className="taskline">
+                            {task.status === "requested" ? "Approval request noted." : `Next: ${task.title}`}
+                          </span>
+                        ) : null}
+                        {item.kind === "missing_rate_approval" && item.state === "missing" ? (
+                          <span className="cites">
+                            <button onClick={() => decide(item.key, "request_approval")}>Request approval</button>
+                            <button onClick={() => decide(item.key, "apply_sheet_rate")}>Use the sheet rate</button>
+                          </span>
+                        ) : null}
+                      </li>
+                    );
+                  })}
               </ul>
             </section>
           ) : null}

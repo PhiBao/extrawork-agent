@@ -152,6 +152,7 @@ h1 {
   background: #f7f1e8;
 }
 .task p { margin: 4px 0 0; font-size: 15px; color: var(--ink); }
+.taskline { display: block; color: var(--accent); font-size: 13px; margin-top: 4px; }
 
 .banner {
   margin: 18px 0 22px;

@@ -57,12 +57,13 @@ password_file = target / ".admin-password"
 if password_file.exists():
     password = password_file.read_text().strip()
 else:
-    alphabet = string.ascii_letters + string.digits + "$@!%*?&"
+    # Avoid "$" and "#" so the value survives dotenv/compose interpolation.
+    alphabet = string.ascii_letters + string.digits + "@!%*?&"
     while True:
         password = "".join(secrets.choice(alphabet) for _ in range(24))
         if (any(c.islower() for c in password) and any(c.isupper() for c in password)
                 and any(c.isdigit() for c in password)
-                and any(c in "$@!%*?&" for c in password)):
+                and any(c in "@!%*?&" for c in password)):
             break
     password_file.write_text(password + "\n")
     password_file.chmod(0o600)

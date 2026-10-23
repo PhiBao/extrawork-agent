@@ -15,7 +15,7 @@ type Finding = {
   reservation?: string | null;
   spans: Span[];
 };
-type Objection = { id: string; index: number; quote: string; topic: string; status: string };
+type Objection = { id: string; index: number; quote: string; topic: string; status: string; classifiedBy?: string };
 type Line = {
   id: string;
   description: string;
@@ -47,7 +47,13 @@ type Proof = {
     sql?: string;
   };
   meterless?: { state?: string; commit?: string; result?: { eventCount?: number; unchangedOnReplay?: boolean } };
-  nemotron?: { state?: string; model?: string; detail?: string };
+  nemotron?: {
+    state?: string;
+    model?: string;
+    detail?: string;
+    rejected?: number;
+    topics?: Array<{ quote: string; topic: string }>;
+  };
   recordedAt?: string;
 };
 type CaseFile = {
@@ -309,6 +315,7 @@ export function App() {
         <strong>Zetaris</strong>
         <span>{zetaris?.state ?? "not run"}{zetaris?.style ? ` · ${zetaris.style}` : ""}{zetaris?.totalCount != null ? ` · ${zetaris.totalCount} rows` : ""}</span>
         <span>Meterless World Model · {meterless?.state ?? "not recorded"} · replay unchanged: {String(meterless?.result?.unchangedOnReplay ?? "not run")}</span>
+        <span>Nemotron · {file.proof?.nemotron?.state ?? "not run"}{file.proof?.nemotron?.topics?.length ? ` · ${file.proof.nemotron.topics.length} topics` : ""}</span>
         {zetaris?.sql ? (
           <details>
             <summary>Query</summary>
@@ -494,6 +501,16 @@ export function App() {
           {zetaris?.detail ? ` — ${zetaris.detail}` : ""}
         </p>
         <p>{file.proof?.nemotron?.detail ?? "Rules engine read the objections."}</p>
+        {file.proof?.nemotron?.topics?.length ? (
+          <ul className="topics">
+            {file.proof.nemotron.topics.map((item) => (
+              <li key={`${item.topic}-${item.quote}`}>
+                <b>{item.topic}</b>
+                <span>{item.quote}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </details>
     </main>
   );

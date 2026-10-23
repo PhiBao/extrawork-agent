@@ -77,6 +77,7 @@ pub struct Objection {
     pub quote: String,
     pub topic: String,
     pub status: String,
+    pub classified_by: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -124,14 +125,55 @@ pub struct Analysis {
     pub rules_engine: bool,
 }
 
+const TOPICS: &[&str] = &["duplicate", "quantity", "ticket", "rate", "scope", "other"];
+
+/// Validate a model's objection classification against the note it came from.
+/// A quote is accepted only if it is an exact substring; a topic is accepted only
+/// if it is in the fixed set. Returns the accepted pairs and the rejected count.
+pub fn parse_topic_response(note: &str, content: &str) -> Result<(Vec<(String, String)>, usize), String> {
+    let start = content.find('{').ok_or("Model response contained no JSON object.")?;
+    let end = content.rfind('}').ok_or("Model response contained no JSON object.")?;
+    let parsed: serde_json::Value = serde_json::from_str(&content[start..=end])
+        .map_err(|err| format!("Model response was not valid JSON: {err}"))?;
+    let items = parsed
+        .get("objections")
+        .and_then(|value| value.as_array())
+        .ok_or("Model response had no objections array.")?;
+    let mut out = Vec::new();
+    let mut rejected = 0;
+    let mut seen = std::collections::BTreeSet::new();
+    for item in items {
+        let quote = item.get("quote").and_then(|value| value.as_str()).unwrap_or("").trim().to_string();
+        let topic = item.get("topic").and_then(|value| value.as_str()).unwrap_or("").trim().to_lowercase();
+        if quote.is_empty() || !note.contains(&quote) || !TOPICS.contains(&topic.as_str()) {
+            rejected += 1;
+            continue;
+        }
+        if seen.insert(quote.clone()) {
+            out.push((quote, topic));
+        }
+    }
+    Ok((out, rejected))
+}
+
 pub fn analyze(docs: &[Doc], extracts: &[ExtractRow], db_amounts: &[(String, i64)], decisions: &[Decision]) -> Analysis {
+    analyze_with_topics(docs, extracts, db_amounts, decisions, &[])
+}
+
+pub fn analyze_with_topics(
+    docs: &[Doc],
+    extracts: &[ExtractRow],
+    db_amounts: &[(String, i64)],
+    decisions: &[Decision],
+    topic_overrides: &[(String, String)],
+) -> Analysis {
     let lines = docs
         .iter()
         .find(|d| d.kind == Kind::CostExport)
         .and_then(|d| parse_cost_csv(&d.text).ok())
         .unwrap_or_default();
     let agreement = source_agreement(&lines, db_amounts);
-    let objections = objections_from(docs);
+    let objections = objections_from(docs, topic_overrides);
     let mut findings = Vec::new();
     findings.extend(duplicate_findings(&lines, docs, &objections));
     findings.extend(quantity_findings(&lines, docs, &objections));
@@ -236,7 +278,16 @@ fn source_agreement(lines: &[CostLine], db_amounts: &[(String, i64)]) -> String 
     }
 }
 
-fn objections_from(docs: &[Doc]) -> Vec<Objection> {
+fn normalize_quote(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')' || c == ' ')
+        .trim()
+        .trim_end_matches(|c: char| c == '.' || c == ' ')
+        .to_lowercase()
+}
+
+fn objections_from(docs: &[Doc], topic_overrides: &[(String, String)]) -> Vec<Objection> {
     let Some(note) = docs.iter().find(|d| d.kind == Kind::ReturnNote) else {
         return Vec::new();
     };
@@ -245,12 +296,22 @@ fn objections_from(docs: &[Doc]) -> Vec<Objection> {
         let trimmed = line.trim();
         let Some(quote) = numbered_quote(trimmed) else { continue };
         let index = out.len() as i32 + 1;
+        let model_topic = topic_overrides
+            .iter()
+            .find(|(candidate, _)| normalize_quote(candidate) == normalize_quote(&quote))
+            .map(|(_, value)| value.as_str())
+            .filter(|value| TOPICS.contains(value));
+        let (selected, source) = match model_topic {
+            Some(value) => (value, "model"),
+            None => (topic(&quote), "rules"),
+        };
         out.push(Objection {
             id: format!("obj-{index}"),
             index,
-            topic: topic(&quote).into(),
+            topic: selected.into(),
             quote,
             status: "unassessed".into(),
+            classified_by: source.into(),
         });
     }
     out
@@ -1029,6 +1090,43 @@ mod tests {
     fn money_parser_rejects_hidden_fractions() {
         assert!(parse_money("10.005").is_err());
         assert_eq!(parse_money("$1,000.00").unwrap(), 100_000);
+    }
+
+    #[test]
+    fn model_topics_override_the_rules_with_normalized_quotes() {
+        let docs = harbor();
+        let lines = parse_cost_csv(&docs.iter().find(|d| d.filename == "cost-export.csv").unwrap().text).unwrap();
+        let db: Vec<_> = lines.iter().map(|l| (l.id.clone(), l.amount_cents)).collect();
+        let analysis = analyze_with_topics(
+            &docs,
+            &extracts(),
+            &db,
+            &[],
+            &[("1. The scissor lift appears billed twice".into(), "other".into())],
+        );
+        let duplicate = analysis.objections.iter().find(|o| o.index == 1).unwrap();
+        assert_eq!(duplicate.topic, "other");
+        assert_eq!(duplicate.classified_by, "model");
+        let rate = analysis.objections.iter().find(|o| o.index == 2).unwrap();
+        assert_eq!(rate.classified_by, "rules");
+    }
+
+    #[test]
+    fn model_topics_are_validated_against_the_note() {
+        let note = "1. The valve package was billed for 12; the receipt shows 10.\n2. There is no signed ticket.";
+        let content = r#"```json
+{"objections":[
+ {"quote":"The valve package was billed for 12; the receipt shows 10.","topic":"quantity"},
+ {"quote":"There is no signed ticket.","topic":"ticket"},
+ {"quote":"A sentence that is not in the note.","topic":"rate"},
+ {"quote":"There is no signed ticket.","topic":"made-up"}
+]}
+```"#;
+        let (topics, rejected) = parse_topic_response(note, content).unwrap();
+        assert_eq!(topics.len(), 2);
+        assert_eq!(topics[0].1, "quantity");
+        assert_eq!(topics[1].1, "ticket");
+        assert_eq!(rejected, 2);
     }
 
     #[test]

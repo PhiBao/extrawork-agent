@@ -160,7 +160,7 @@ refusal behaviour and the visible state transitions.
 - **Primary track:** **02 — The Agent That Can Explain Why.**
 - **Backup track:** **01 — Solving Fragmented Intelligence.**
 - **Sponsor technology:** Zetaris (federation boundary), Meterless (World Model engine), NVIDIA
-  Nemotron (bounded extraction).
+  Nemotron (validated objection classification, served through Nebius Token Factory).
 - **Rubric alignment:** Impact 30 (returned requests and cash), Technical 20 (Rust rules, evidence
   validation, revision state), Innovation 15 (repair protocol and authority separation), Demo 15
   (duplicate removed, rate approval changes the answer), Product & UX 10 (objection-indexed sheet),
@@ -236,11 +236,20 @@ passing test (`meterless-world/src/project.test.ts`) plus the conformance runner
 
 ### NVIDIA integration
 
-`NVIDIA_API_KEY` enables a bounded hosted Nemotron call
-(`nvidia/nemotron-3-nano-30b-a3b` at `https://integrate.api.nvidia.com/v1/chat/completions`) for
-objection extraction. No key is configured here, so the rules engine performs extraction and the UI
-says so. When a key is present, the model's output is treated as a candidate only; amounts and
-findings remain deterministic. This is the honest limit, not a simulated call.
+Nemotron is used as a **bounded classifier**, not as a source of truth. The server sends the return
+note to `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` and asks for one exact quote and one topic per
+objection. Every returned quote must exist verbatim in the note, and every topic must be one of
+`duplicate`, `quantity`, `ticket`, `rate`, `scope`, or `other`. Invalid pairs are rejected and counted.
+Accepted topics are persisted and **route the deterministic checks**; amounts still come from Rust.
+
+The current deployment uses **Nebius Token Factory** as the OpenAI-compatible gateway
+(`https://api.tokenfactory.nebius.com/v1/chat/completions`) because direct NVIDIA account
+verification is restricted. The model itself is NVIDIA Nemotron. A direct NVIDIA key can be used by
+changing `NEMOTRON_URL`; the request shape is identical.
+
+The key stays server-side. No key is committed. If the model is unavailable or returns invalid
+output, the heuristic classifier runs and the proof says so. The model cannot set a total, approve a
+rate, or create an entitlement.
 
 ### Cursor
 
@@ -264,7 +273,7 @@ The diagram is also available as a self-contained HTML file: `docs/architecture.
 | Case store | PostgreSQL 16 (Docker locally) |
 | Evidence source | Separate CSV file, read independently of the database |
 | World model | Meterless World Model reference (TypeScript sidecar, vendored and pinned) |
-| Model | Hosted NVIDIA Nemotron (optional), deterministic rules engine always on |
+| Model | NVIDIA Nemotron via Nebius Token Factory (optional), deterministic rules engine always on |
 | Federation | Zetaris REST client (optional at runtime) |
 | Export | Server-rendered review packet + zip manifest |
 
@@ -383,10 +392,11 @@ evidence.
 | `ZETARIS_ORG_ID` | no | Numeric organisation id (required for REST and SaaS) |
 | `ZETARIS_PROJECT_TABLE` | no | Defaults to `project_lines` |
 | `ZETARIS_EVIDENCE_TABLE` | no | Defaults to `evidence_extracts` |
-| `NVIDIA_API_KEY` | no | Enables the hosted Nemotron call |
-| `NEMOTRON_MODEL` | no | Defaults to `nvidia/nemotron-3-nano-30b-a3b` |
+| `NEMOTRON_API_KEY` | no | Enables the hosted Nemotron classifier; `NVIDIA_API_KEY` is also accepted |
+| `NEMOTRON_URL` | no | Defaults to the Token Factory chat-completions URL; set a direct NVIDIA URL if available |
+| `NEMOTRON_MODEL` | no | Defaults to `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` |
 
-Never put a Zetaris key or an NVIDIA key in client code. The app reads them server-side only.
+Never put a Zetaris or Nemotron key in client code. The app reads them server-side only.
 
 ---
 
@@ -448,7 +458,8 @@ resets the evidence CSV for that case.
 | AWS managed cluster | **Deleted after diagnosis; the account-level ELB restriction remains** |
 | AWS ELB block diagnosed | **Yes — `OperationNotPermittedException`, reproduced as root and in `us-east-1`** |
 | AWS quickstart registration | **Verified: stack `CREATE_COMPLETE`, callback HTTP 200** |
-| Hosted Nemotron extraction | **Not performed here — key absent; rules engine used and labelled** |
+| Hosted Nemotron classification | **Yes — all objections in both cases classified by Nemotron; exact quote/topic validation; topics route the checks** |
+| Invalid model output handling | **Rejected quote/topic pairs counted; heuristic fallback** |
 | Money recovered / claim approved / invoice sent | **No — explicitly out of scope** |
 | Cursor use | **Not verified; not claimed** |
 
@@ -458,7 +469,7 @@ resets the evidence CSV for that case.
   notes.
 - **Real:** the Rust analysis, the PostgreSQL records, the file parsing, the World Model sidecar and
   its conformance, the Zetaris Gateway query, the HTTP API, the exports, the browser UI.
-- **Configured but unexercised:** NVIDIA hosted inference.
+- **Live external services:** local Zetaris 2.4.3 and Nebius Token Factory (NVIDIA Nemotron).
 
 ---
 
@@ -468,8 +479,8 @@ resets the evidence CSV for that case.
 
 - **Single local tenant.** This is a demo build; there is no production identity provider. The server
   binds to loopback and must not be exposed publicly as-is.
-- **Server-side secrets.** Zetaris and NVIDIA keys are read from the environment and never sent to the
-  browser.
+- **Server-side secrets.** Zetaris, Nemotron, and gateway keys are read from the environment and
+  never sent to the browser.
 - **Fixed SQL template.** Table identifiers are validated against a strict grammar and the case id is
   restricted to alphanumerics and hyphens; a model cannot author SQL.
 - **Upload limits.** 5 MB per file, extension allowlist, UTF-8 or uncompressed PDF text only, bounded

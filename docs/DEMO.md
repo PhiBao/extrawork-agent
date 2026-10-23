@@ -13,12 +13,12 @@ Say "synthetic" once, early. Do not claim recovery or approval.
 | 2:05–2:30 | Objection 03, scope exclusion, directive | "The base contract excludes temporary power relocation. Apex directed it the night of the pour. That supports the scope position. It still does not approve the price." |
 | 2:30–2:55 | Export packet + zip | "The packet carries the supported total, every reservation, and an evidence manifest with document hashes. It is prepared for review, not approved to bill." |
 | 2:55–3:20 | **How this was checked** | "Zetaris joined the registered project-line and evidence tables through its Gateway; four extracts came back and the query was closed. The Meterless World Model recorded the case with stable IDs and the replay was unchanged. This is the local Zetaris platform; the AWS cluster is blocked by an account-level load-balancer restriction." |
-| 3:20–3:30 | Architecture diagram | "Zetaris federates when configured. Rust owns the money and the rules. Nemotron can extract candidates, but it cannot set a total." |
+| 3:20–3:30 | Architecture diagram | "Zetaris joined the records. Nemotron classified the objections with exact quotes. Rust owns the money and the rules, so the model cannot set a total." |
 
 ## Do not say
 
 - "We recovered $1,000."
 - "The claim was approved."
 - "Zetaris is querying live" (unless credentials are set and the health panel says connected).
-- "Nemotron extracted this" (unless a key is configured and the call succeeded).
+- "Nemotron decided the amount" or "Nemotron approved the rate." It classifies the objection topic; Rust computes the money.
 - "Cursor was used" (not verified).

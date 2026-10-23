@@ -8,7 +8,7 @@ use axum::{
 };
 use chrono::Utc;
 use extrawork::domain::{self, Decision, Doc, Kind};
-use extrawork::extract::parse_upload;
+use extrawork::extract::{self, parse_upload};
 use extrawork::zetaris::{self, ZetarisConfig};
 use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
@@ -23,7 +23,8 @@ struct App {
     root: PathBuf,
     zetaris: Option<ZetarisConfig>,
     meterless_url: String,
-    nvidia_key: Option<String>,
+    nemotron_key: Option<String>,
+    nemotron_url: String,
     nemotron_model: String,
 }
 
@@ -37,12 +38,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     migrate(&db).await?;
     let app_state = Arc::new(App {
         db,
-        http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(20)).build()?,
+        http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build()?,
         root: root.clone(),
         zetaris: ZetarisConfig::from_env(),
         meterless_url: std::env::var("METERLESS_URL").unwrap_or_else(|_| "http://127.0.0.1:8091".into()),
-        nvidia_key: std::env::var("NVIDIA_API_KEY").ok().filter(|s| !s.is_empty()),
-        nemotron_model: std::env::var("NEMOTRON_MODEL").unwrap_or_else(|_| "nvidia/nemotron-3-nano-30b-a3b".into()),
+        nemotron_key: std::env::var("NEMOTRON_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("NVIDIA_API_KEY").ok())
+            .filter(|s| !s.is_empty()),
+        nemotron_url: std::env::var("NEMOTRON_URL")
+            .unwrap_or_else(|_| "https://api.tokenfactory.nebius.com/v1/chat/completions".into()),
+        nemotron_model: std::env::var("NEMOTRON_MODEL")
+            .unwrap_or_else(|_| "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B".into()),
     });
     seed_if_empty(&app_state).await?;
     let dist = root.join("web/dist");
@@ -73,11 +80,19 @@ async fn migrate(db: &PgPool) -> Result<(), sqlx::Error> {
             revision INT NOT NULL,
             synthetic BOOLEAN NOT NULL,
             meta JSONB NOT NULL,
-            proof JSONB NOT NULL DEFAULT '{}'::jsonb
+            proof JSONB NOT NULL DEFAULT '{}'::jsonb,
+            model_topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+            model_hash TEXT NOT NULL DEFAULT ''
         )",
     )
     .execute(db)
     .await?;
+    sqlx::query("ALTER TABLE cases ADD COLUMN IF NOT EXISTS model_topics JSONB NOT NULL DEFAULT '[]'::jsonb")
+        .execute(db)
+        .await?;
+    sqlx::query("ALTER TABLE cases ADD COLUMN IF NOT EXISTS model_hash TEXT NOT NULL DEFAULT ''")
+        .execute(db)
+        .await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS documents (
             id TEXT PRIMARY KEY,
@@ -198,7 +213,7 @@ async fn reset_case_seed(app: &App, id: &str) -> Result<(), Box<dyn std::error::
             .execute(&app.db)
             .await?;
     }
-    sqlx::query("INSERT INTO cases (id, revision, synthetic, meta, proof) VALUES ($1, 1, true, $2, '{}') ON CONFLICT (id) DO UPDATE SET revision = 1, synthetic = true, meta = $2, proof = '{}'")
+    sqlx::query("INSERT INTO cases (id, revision, synthetic, meta, proof, model_topics, model_hash) VALUES ($1, 1, true, $2, '{}', '[]', '') ON CONFLICT (id) DO UPDATE SET revision = 1, synthetic = true, meta = $2, proof = '{}', model_topics = '[]', model_hash = ''")
         .bind(id)
         .bind(meta)
         .execute(&app.db)
@@ -426,7 +441,7 @@ fn csv_escape(value: &str) -> String {
 }
 
 async fn compose(app: &App, case_id: &str) -> Result<Value, sqlx::Error> {
-    let case_row = sqlx::query("SELECT revision, synthetic, meta, proof FROM cases WHERE id = $1").bind(case_id).fetch_optional(&app.db).await?;
+    let case_row = sqlx::query("SELECT revision, synthetic, meta, proof, model_topics FROM cases WHERE id = $1").bind(case_id).fetch_optional(&app.db).await?;
     let Some(row) = case_row else {
         return Ok(Value::Null);
     };
@@ -436,7 +451,21 @@ async fn compose(app: &App, case_id: &str) -> Result<Value, sqlx::Error> {
     let extracts = load_case_extracts(app, case_id).await.unwrap_or_else(|_| {
         domain::parse_extracts(&evidence_text(app, case_id)).unwrap_or_default()
     });
-    let analysis = domain::analyze(&docs, &extracts, &amounts, &decisions);
+    let overrides: Vec<(String, String)> = row
+        .get::<Value, _>("model_topics")
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let quote = item.get("quote")?.as_str()?.to_string();
+                    let topic = item.get("topic")?.as_str()?.to_string();
+                    Some((quote, topic))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let analysis = domain::analyze_with_topics(&docs, &extracts, &amounts, &decisions, &overrides);
     let documents: Vec<Value> = docs
         .iter()
         .map(|d| json!({"id": d.id, "filename": d.filename, "kind": d.kind, "sha256": d.sha256}))
@@ -468,7 +497,7 @@ async fn health(State(app): State<Arc<App>>) -> Json<Value> {
         "ok": true,
         "zetaris": zetaris,
         "meterless": {"state": if meterless_ok {"connected"} else {"unavailable"}, "url": app.meterless_url, "engine": "world-model"},
-        "nemotron": {"state": if app.nvidia_key.is_some() {"configured"} else {"not_configured"}, "model": app.nemotron_model},
+        "nemotron": {"state": if app.nemotron_key.is_some() {"configured"} else {"not_configured"}, "model": app.nemotron_model},
         "onboarding": {"callback": "CREATE_COMPLETE", "region": "ap-southeast-1", "stack": "zetaris-main-9acdd8a3", "query": "credentials not in this process"}
     }))
 }
@@ -670,6 +699,61 @@ async fn project_world(app: &App, case_id: &str) -> Result<(), String> {
             }
         }
     }
+    let docs = load_docs(app, case_id).await.map_err(|e| e.to_string())?;
+    let note_hash = docs
+        .iter()
+        .find(|d| d.kind == domain::Kind::ReturnNote)
+        .map(|d| extract::sha256_hex(d.text.as_bytes()))
+        .unwrap_or_default();
+    let stored = sqlx::query("SELECT model_topics, model_hash, proof FROM cases WHERE id = $1")
+        .bind(case_id)
+        .fetch_optional(&app.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let parsed_topics: Vec<(String, String)> = stored
+        .as_ref()
+        .and_then(|row| row.get::<Option<Value>, _>("model_topics"))
+        .and_then(|value| value.as_array().cloned())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let quote = item.get("quote")?.as_str()?.to_string();
+                    let topic = item.get("topic")?.as_str()?.to_string();
+                    Some((quote, topic))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let stored_hash = stored
+        .as_ref()
+        .and_then(|row| row.get::<Option<String>, _>("model_hash"))
+        .unwrap_or_default();
+    let reuse = !note_hash.is_empty() && stored_hash == note_hash && !parsed_topics.is_empty();
+    let (_model_topics, nemotron_proof) = if reuse {
+        let previous = stored
+            .as_ref()
+            .and_then(|row| row.get::<Option<Value>, _>("proof"))
+            .and_then(|proof| proof.get("nemotron").cloned())
+            .unwrap_or_else(|| json!({"state": "cached", "live": true, "model": app.nemotron_model}));
+        (parsed_topics, previous)
+    } else {
+        let (topics, proof) = classify_objections(app, &docs).await;
+        if proof["state"] == "called" {
+            let value = json!(topics
+                .iter()
+                .map(|(quote, topic)| json!({"quote": quote, "topic": topic}))
+                .collect::<Vec<_>>());
+            sqlx::query("UPDATE cases SET model_topics = $1, model_hash = $2 WHERE id = $3")
+                .bind(value)
+                .bind(&note_hash)
+                .bind(case_id)
+                .execute(&app.db)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        (topics, proof)
+    };
     let view = compose(app, case_id).await.map_err(|e| e.to_string())?;
     let revision = view.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
     let projection = json!({
@@ -686,7 +770,6 @@ async fn project_world(app: &App, case_id: &str) -> Result<(), String> {
     if let Some(object) = body.as_object_mut() {
         object.remove("shape");
     }
-    let nemotron = nemotron_status(app, &view).await;
     let proof = json!({
         "joinMode": join_mode,
         "joinDetail": view.get("sourceAgreement").cloned().unwrap_or(json!("")),
@@ -698,7 +781,7 @@ async fn project_world(app: &App, case_id: &str) -> Result<(), String> {
             "httpStatus": status.as_u16(),
             "result": body
         },
-        "nemotron": nemotron,
+        "nemotron": nemotron_proof,
         "rulesEngine": true,
         "recordedAt": Utc::now().to_rfc3339()
     });
@@ -748,17 +831,77 @@ fn projection_facts(view: &Value) -> Vec<Value> {
     facts
 }
 
-async fn nemotron_status(app: &App, view: &Value) -> Value {
-    let Some(key) = &app.nvidia_key else {
-        return json!({"state": "not_configured", "model": app.nemotron_model, "detail": "No NVIDIA_API_KEY. Objections were read by the rules engine."});
+/// Ask Nemotron to classify the return-note objections, then accept only quotes
+/// that exist verbatim in the note and topics in the fixed routing set. The
+/// accepted topics are stored and passed into the deterministic analysis.
+async fn classify_objections(app: &App, docs: &[domain::Doc]) -> (Vec<(String, String)>, Value) {
+    let Some(note) = docs.iter().find(|d| d.kind == domain::Kind::ReturnNote) else {
+        return (Vec::new(), json!({"state": "skipped", "detail": "No return note in this case."}));
     };
-    let quotes: Vec<String> = view.get("objections").and_then(|v| v.as_array()).map(|items| items.iter().filter_map(|o| o.get("quote").and_then(|q| q.as_str()).map(|s| s.to_string())).collect()).unwrap_or_default();
-    let prompt = format!("Return JSON {{\"quotes\": string[]}} containing only exact objection sentences from this note. Do not add sentences.\n\n{}", quotes.join("\n"));
-    let body = json!({"model": app.nemotron_model, "temperature": 0, "max_tokens": 400, "messages": [{"role": "user", "content": prompt}]});
-    match app.http.post("https://integrate.api.nvidia.com/v1/chat/completions").bearer_auth(key).json(&body).send().await {
-        Ok(res) if res.status().is_success() => json!({"state": "called", "model": app.nemotron_model, "live": true, "detail": "Hosted Nemotron was called. Deterministic checks still decide amounts."}),
-        Ok(res) => json!({"state": "error", "model": app.nemotron_model, "live": false, "detail": format!("NVIDIA returned HTTP {}.", res.status())}),
-        Err(err) => json!({"state": "error", "model": app.nemotron_model, "live": false, "detail": err.to_string()}),
+    let Some(key) = &app.nemotron_key else {
+        return (
+            Vec::new(),
+            json!({
+                "state": "not_configured",
+                "model": app.nemotron_model,
+                "detail": "No Nemotron API key. Objections were classified by the rules engine."
+            }),
+        );
+    };
+    let prompt = format!(
+        "Return JSON only: {{\"objections\":[{{\"quote\":\"exact sentence from the note\",\"topic\":\"duplicate|quantity|ticket|rate|scope|other\"}}]}}. Use only exact substrings of the note. Do not add facts or sentences.\n\nNOTE:\n{}",
+        note.text
+    );
+    let body = json!({
+        "model": app.nemotron_model,
+        "temperature": 0,
+        "max_tokens": 2000,
+        "messages": [{"role": "user", "content": prompt}]
+    });
+    let response = app.http.post(&app.nemotron_url).bearer_auth(key).json(&body).send().await;
+    match response {
+        Ok(res) if res.status().is_success() => {
+            let payload: Value = match res.json().await {
+                Ok(value) => value,
+                Err(err) => {
+                    return (Vec::new(), json!({"state": "error", "live": false, "detail": format!("Nemotron response was unreadable: {err}")}));
+                }
+            };
+            let content = payload["choices"][0]["message"]["content"].as_str().unwrap_or("");
+            match domain::parse_topic_response(&note.text, content) {
+                Ok((topics, rejected)) => {
+                    let list = topics.iter().map(|(quote, topic)| json!({"quote": quote, "topic": topic})).collect::<Vec<_>>();
+                    (
+                        topics,
+                        json!({
+                            "state": "called",
+                            "live": true,
+                            "model": app.nemotron_model,
+                            "topics": list,
+                            "rejected": rejected,
+                            "detail": format!("Nemotron classified the objections; {} quote/topic pair(s) rejected by validation.", rejected)
+                        }),
+                    )
+                }
+                Err(err) => (
+                    Vec::new(),
+                    json!({"state": "error", "live": false, "model": app.nemotron_model, "detail": err}),
+                ),
+            }
+        }
+        Ok(res) => (
+            Vec::new(),
+            json!({
+                "state": "error",
+                "live": false,
+                "model": app.nemotron_model,
+                "detail": format!("Nemotron endpoint returned HTTP {}.", res.status())
+            }),
+        ),
+        Err(err) => (
+            Vec::new(),
+            json!({"state": "error", "live": false, "model": app.nemotron_model, "detail": err.to_string()}),
+        ),
     }
 }
 

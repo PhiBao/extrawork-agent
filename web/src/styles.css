@@ -153,6 +153,10 @@ h1 {
 }
 .task p { margin: 4px 0 0; font-size: 15px; color: var(--ink); }
 .taskline { display: block; color: var(--accent); font-size: 13px; margin-top: 4px; }
+.topics { list-style: none; padding: 0; margin: 8px 0 0; font-size: 13px; }
+.topics li { display: grid; grid-template-columns: 90px 1fr; gap: 10px; padding: 4px 0; border-top: 1px dotted var(--line); }
+.topics b { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.topics span { color: var(--ink); }
 
 .banner {
   margin: 18px 0 22px;

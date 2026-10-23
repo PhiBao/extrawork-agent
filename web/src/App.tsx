@@ -215,7 +215,7 @@ export function App() {
         <a href="/api/cases/harbor-annex/export">Download the review packet</a>
         <a href="/api/cases/harbor-annex/export.zip">Download the record zip</a>
         <form className="upload" onSubmit={upload}>
-          <label className="quiet" htmlFor="record">Add a record</label>
+          <label htmlFor="record">Add a record</label>
           <input id="record" name="file" type="file" accept=".csv,.txt,.eml,.md,.pdf" required />
           <button className="quiet" type="submit">Add</button>
         </form>

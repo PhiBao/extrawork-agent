@@ -149,7 +149,8 @@ h1 {
 table { width: 100%; border-collapse: collapse; margin: 8px 0 18px; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 8px 6px; border-top: 1px solid var(--line); vertical-align: top; }
 th { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; color: var(--muted); }
-caption { text-align: left; padding-bottom: 6px; }
+caption { text-align: left; padding-bottom: 6px; white-space: nowrap; }
+.upload label { font-size: 13px; color: var(--muted); }
 tr.removed td { color: var(--muted); text-decoration: line-through; }
 .right { text-align: right; white-space: nowrap; }
 td:nth-child(3) { white-space: nowrap; }

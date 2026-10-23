@@ -604,7 +604,10 @@ async fn nemotron_status(app: &App, view: &Value) -> Value {
 }
 
 fn render_packet(view: &Value) -> String {
-    let money = |cents: i64| format!("${}.{:02}", cents / 100, cents.abs() % 100);
+    let money = |cents: i64| {
+        let sign = if cents < 0 { "-" } else { "" };
+        format!("{sign}${}.{:02}", group_dollars(cents.abs() / 100), cents.abs() % 100)
+    };
     let submitted = view["submittedCents"].as_i64().unwrap_or(0);
     let supported = view["supportedCents"].as_i64().unwrap_or(0);
     let proposal = view["proposalCents"].as_i64().unwrap_or(0);

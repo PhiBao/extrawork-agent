@@ -177,12 +177,18 @@ from the URL (`api.saas.` → SaaS, `:8888` or a path ending in `/api/v1.0` → 
 (`project_lines`, `evidence_extracts`) with identifier validation. No model writes SQL.
 
 **Current status:** the AWS quickstart stack `zetaris-main-9acdd8a3` (`ap-southeast-1`) is
-`CREATE_COMPLETE`, its callback returned 200, and the cross-account role has been used by the Zetaris
-control plane. **No Zetaris cluster is running in the account** (`eks list-clusters` is empty in every
-region, and there are no EC2 workloads), so no Gateway URL or API key exists here yet. The app does
-not claim a live query. It performs the same join locally across **two independently stored sources**
-— PostgreSQL project lines and a separate evidence CSV — and reports that truthfully in the proof
-panel.
+`CREATE_COMPLETE`, its callback returned 200, and the EKS cluster `zetaris-extrawork-8b3246e1` is
+**ACTIVE** with two running nodes. The application phase then stopped at the AWS Load Balancer
+Controller: this AWS account is under an account-level restriction, and every load-balancer creation
+returns `OperationNotPermittedException — This AWS account currently does not support creating load
+balancers` (including from root, and in other regions). Target groups and nodes work; only LB creation
+is blocked. No Gateway URL or API key exists yet.
+
+The app does not claim a live query. It performs the same join locally across **two independently
+stored sources** — PostgreSQL project lines and a separate evidence CSV — and reports that truthfully
+in the proof panel. The supported local Zetaris bundle is the fastest path to a real query; see
+[`docs/ZETARIS.md`](docs/ZETARIS.md) and `scripts/setup-local-zetaris.sh`. The AWS Support case text is
+in [`docs/AWS-ELB-CASE.md`](docs/AWS-ELB-CASE.md).
 
 To connect the real workspace: create the cluster in Zetaris Cloud (`Compute > Clusters`), copy the
 Gateway URL and either an API key or the organisation credentials, then set:
@@ -418,7 +424,8 @@ seeded records, clears decisions, and resets the evidence CSV.
 | Meterless World Model engine used in a working feature | **Yes — projection on every revision, verified by test and conformance** |
 | World Model replay idempotent for the same projection | **Verified by test** |
 | Zetaris client for Gateway, REST, and SaaS surfaces | **Implemented; tested against the published shapes and a local HTTP contract mock** |
-| Live Zetaris query | **Not performed here — no cluster or credentials in this account yet** |
+| Live Zetaris query | **Not performed — cluster is active but the AWS account blocks load balancers; no Gateway yet** |
+| AWS ELB block diagnosed | **Yes — account-level `OperationNotPermittedException`, reproduced as root and in `us-east-1`** |
 | AWS quickstart registration | **Verified: stack `CREATE_COMPLETE`, callback HTTP 200** |
 | Hosted Nemotron extraction | **Not performed here — key absent; rules engine used and labelled** |
 | Local two-source join (PostgreSQL + evidence CSV) | **Live in the demo** |

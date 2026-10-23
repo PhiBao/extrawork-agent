@@ -168,11 +168,20 @@ pub fn gateway_body(sql: &str, limit: u32) -> Value {
 }
 
 fn ident(value: &str) -> Result<String, String> {
-    if value.len() > 64
-        || !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        || value.starts_with(|c: char| c.is_ascii_digit())
-    {
-        return Err("Zetaris table names must be simple identifiers.".into());
+    // One optional namespace separator: `database.table`. Each part must be a
+    // simple identifier so no caller-controlled SQL can enter the template.
+    let parts: Vec<&str> = value.split('.').collect();
+    if parts.len() > 2 {
+        return Err("Zetaris table names allow at most one namespace separator.".into());
+    }
+    for part in &parts {
+        if part.is_empty()
+            || part.len() > 64
+            || !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || part.starts_with(|c: char| c.is_ascii_digit())
+        {
+            return Err("Zetaris table names must be simple identifiers.".into());
+        }
     }
     Ok(value.to_string())
 }
@@ -446,6 +455,15 @@ mod tests {
         assert!(join_sql("project_lines; drop", "evidence_extracts", "harbor-annex").is_err());
         assert!(join_sql("project_lines", "evidence_extracts", "harbor' OR 1=1").is_err());
         assert!(join_sql("1project", "evidence", "x").is_err());
+        assert!(join_sql("a.b.c", "evidence", "x").is_err());
+        assert!(join_sql("harbor.", "evidence", "x").is_err());
+    }
+
+    #[test]
+    fn accepts_a_single_namespace() {
+        let sql = join_sql("harbor.project_lines", "harbor.evidence_extracts", "x").unwrap();
+        assert!(sql.contains("FROM harbor.project_lines p"));
+        assert!(sql.contains("JOIN harbor.evidence_extracts e"));
     }
 
     #[test]

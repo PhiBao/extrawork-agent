@@ -3,6 +3,8 @@ node_modules/
 web/dist/
 data/
 meterless-world/data/
+vendor/
+*.admin-password
 .env
 *.log
 .DS_Store

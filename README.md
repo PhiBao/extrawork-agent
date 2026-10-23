@@ -433,8 +433,8 @@ Try this order:
 8. Switch to **CHG-207 · Northgate Plant**. Accept the two-unit shortfall and watch the line
    adjustment; select the Saturday-crew objection to see the refusal and the next request.
 
-A timed shot list and narration guardrails are in `docs/DEMO.md`. The submission deck is
-`docs/deck.html` (printable to PDF from a browser).
+A timed shot list and narration guardrails are in `docs/DEMO.md`. The 9-page submission deck is
+[`docs/ExtraWork-pitch-deck.pdf`](docs/ExtraWork-pitch-deck.pdf) (1920×1080, open-slide).
 
 ### What to look for as a judge
 

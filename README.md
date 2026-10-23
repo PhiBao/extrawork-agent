@@ -24,6 +24,13 @@ product. It prepares a request for contractor review. It does not authorize bill
 > **Synthetic demo:** every record in both shipped cases is fabricated and labelled as such. No money
 > was recovered, no claim was approved, and no invoice was submitted.
 
+## Demo video
+
+[![ExtraWork demo video](https://github.com/PhiBao/extrawork-agent/releases/download/demo-v1/extrawork-poster.jpg)](https://github.com/PhiBao/extrawork-agent/releases/tag/demo-v1)
+
+**1:54 · narrated · 1080p.** [Watch the demo on GitHub Releases](https://github.com/PhiBao/extrawork-agent/releases/tag/demo-v1).
+The caption track is included as `extrawork-demo.srt` in the same release.
+
 ---
 
 ## Why this product

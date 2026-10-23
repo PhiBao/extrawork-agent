@@ -33,6 +33,18 @@ impl ApiStyle {
             Self::Saas => "saas",
         }
     }
+
+    /// Best-effort style inference from a pasted workspace URL.
+    pub fn detect(url: &str) -> Self {
+        let value = url.trim_end_matches('/');
+        if value.contains("api.saas.enterprise.zetaris.com") {
+            Self::Saas
+        } else if value.ends_with("/api/v1.0") || value.contains(":8888") {
+            Self::Rest
+        } else {
+            Self::Gateway
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +65,15 @@ pub struct ZetarisConfig {
 
 impl ZetarisConfig {
     pub fn from_env() -> Option<Self> {
-        let style = ApiStyle::parse(std::env::var("ZETARIS_API_STYLE").ok().as_deref());
+        let explicit_style = std::env::var("ZETARIS_API_STYLE").ok().filter(|s| !s.is_empty());
+        let configured_base = std::env::var("ZETARIS_BASE_URL").ok().filter(|s| !s.is_empty());
+        let style = match explicit_style.as_deref() {
+            Some(value) => ApiStyle::parse(Some(value)),
+            None => match configured_base.as_deref() {
+                Some(value) => ApiStyle::detect(value),
+                None => ApiStyle::Gateway,
+            },
+        };
         let org_id = std::env::var("ZETARIS_ORG_ID").ok().filter(|s| !s.is_empty());
         let auth = match std::env::var("ZETARIS_API_KEY").ok().filter(|s| !s.is_empty()) {
             Some(key) => Auth::Key(key),
@@ -63,13 +83,10 @@ impl ZetarisConfig {
                 Auth::User { username, password }
             }
         };
-        let base_url = std::env::var("ZETARIS_BASE_URL")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| match style {
-                ApiStyle::Saas => SAAS_DEFAULT_BASE.to_string(),
-                _ => String::new(),
-            });
+        let base_url = configured_base.unwrap_or_else(|| match style {
+            ApiStyle::Saas => SAAS_DEFAULT_BASE.to_string(),
+            _ => String::new(),
+        });
         if base_url.is_empty() {
             return None;
         }
@@ -92,9 +109,16 @@ impl ZetarisConfig {
 
 fn normalize_base(value: &str, style: ApiStyle) -> String {
     let mut trimmed = value.trim().trim_end_matches('/').to_string();
-    if style != ApiStyle::Rest {
-        if let Some(stripped) = trimmed.strip_suffix("/api/v1.0") {
-            trimmed = stripped.to_string();
+    match style {
+        ApiStyle::Rest => {
+            if !trimmed.ends_with("/api/v1.0") {
+                trimmed.push_str("/api/v1.0");
+            }
+        }
+        _ => {
+            if let Some(stripped) = trimmed.strip_suffix("/api/v1.0") {
+                trimmed = stripped.to_string();
+            }
         }
     }
     trimmed
@@ -455,10 +479,18 @@ mod tests {
     }
 
     #[test]
+    fn style_is_detected_from_a_pasted_url() {
+        assert_eq!(ApiStyle::detect("https://api.saas.enterprise.zetaris.com"), ApiStyle::Saas);
+        assert_eq!(ApiStyle::detect("http://localhost:8888/api/v1.0"), ApiStyle::Rest);
+        assert_eq!(ApiStyle::detect("https://cluster.example.com"), ApiStyle::Gateway);
+    }
+
+    #[test]
     fn base_url_is_normalized_per_style() {
         assert_eq!(normalize_base("https://cluster.example/", ApiStyle::Gateway), "https://cluster.example");
         assert_eq!(normalize_base("https://cluster.example/api/v1.0", ApiStyle::Gateway), "https://cluster.example");
         assert_eq!(normalize_base("http://localhost:8888/api/v1.0/", ApiStyle::Rest), "http://localhost:8888/api/v1.0");
+        assert_eq!(normalize_base("http://localhost:8888", ApiStyle::Rest), "http://localhost:8888/api/v1.0");
     }
 
     #[test]

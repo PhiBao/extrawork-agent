@@ -69,7 +69,7 @@ export function App() {
   const [busy, setBusy] = useState("Reading the returned request");
   const [selected, setSelected] = useState("obj-1");
   const [source, setSource] = useState<Doc | null>(null);
-  const [quote, setQuote] = useState("");
+  const [active, setActive] = useState<{ documentId: string; quote: string } | null>(null);
 
   async function load() {
     const response = await fetch("/api/cases/harbor-annex");
@@ -90,15 +90,34 @@ export function App() {
     [file, objection],
   );
 
+  const citations = useMemo(() => {
+    const seen = new Set<string>();
+    return findings
+      .flatMap((item) => item.spans)
+      .filter((span) => {
+        const key = `${span.documentId}:${span.quote}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }, [findings]);
+
   useEffect(() => {
-    const span = findings.flatMap((item) => item.spans)[0];
+    setActive(null);
+  }, [objection?.id]);
+
+  useEffect(() => {
+    const span =
+      (active && citations.find((item) => item.documentId === active.documentId && item.quote === active.quote)) ||
+      citations[0];
     if (!span) return;
-    setQuote(span.quote);
     fetch(`/api/cases/harbor-annex/documents/${span.documentId}`)
       .then((response) => response.json())
       .then((doc: Doc) => setSource(doc))
       .catch(() => setSource(null));
-  }, [findings]);
+  }, [citations, active]);
+
+  const quote = active?.quote ?? citations[0]?.quote ?? "";
 
   async function decide(findingKey: string, decision: string) {
     if (!file) return;
@@ -164,6 +183,18 @@ export function App() {
           <h3>{primary?.title ?? "No record answers this sentence yet."}</h3>
           <p className="explanation">{primary?.explanation}</p>
           {primary?.reservation ? <p className="reservation">{primary.reservation}</p> : null}
+          {primary?.spans.length ? (
+            <div className="cites primary-cites">
+              {primary.spans.map((span) => (
+                <button
+                  key={span.id}
+                  onClick={() => setActive({ documentId: span.documentId, quote: span.quote })}
+                >
+                  {span.filename}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="money">
             <p><span>Submitted</span><strong>{money(file.submittedCents)}</strong></p>
             <p><span>Supported now</span><strong>{money(file.supportedCents)}</strong></p>
@@ -203,6 +234,48 @@ export function App() {
               ))}
             </tbody>
           </table>
+          {findings.filter((item) => item.key !== primary?.key).length ? (
+            <section className="record">
+              <h2>What else the records say</h2>
+              <ul>
+                {findings.filter((item) => item.key !== primary?.key).map((item) => (
+                  <li key={item.key}>
+                    <span className={`status ${item.state}`}>{item.state}</span>
+                    <strong>{item.title}</strong>
+                    <span>{item.explanation}</span>
+                    {item.spans.length ? (
+                      <span className="cites">
+                        {item.spans.map((span) => (
+                          <button
+                            key={`${item.key}-${span.id}`}
+                            onClick={() => setActive({ documentId: span.documentId, quote: span.quote })}
+                          >
+                            {span.filename}
+                          </button>
+                        ))}
+                      </span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {file.findings.filter((item) => !item.objectionId).length ? (
+            <section className="record unlinked">
+              <h2>Also checked</h2>
+              <ul>
+                {file.findings
+                  .filter((item) => !item.objectionId)
+                  .map((item) => (
+                    <li key={item.key}>
+                      <span className={`status ${item.state}`}>{item.state}</span>
+                      <strong>{item.title}</strong>
+                      <span>{item.explanation}</span>
+                    </li>
+                  ))}
+              </ul>
+            </section>
+          ) : null}
           <p className="status">{file.workflow.replaceAll("_", " ")} · {file.billingPosture.replaceAll("_", " ")}</p>
         </article>
         <aside className="source">

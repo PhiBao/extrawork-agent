@@ -172,7 +172,8 @@ The client supports the three surfaces Zetaris actually publishes, selected by
 | `saas` | `GET /api/v1.0/datamart` | `POST /api/v1.0/query/sql/start` with `{select, pageLimit}`, then `DELETE /query/sql/close/{token}` |
 
 The Gateway style is what a managed cluster exposes to coding clients; it accepts an API key or a
-username/password login at `/api/auth/login`. The join is a fixed template over two registered tables
+username/password login at `/api/auth/login`. If `ZETARIS_API_STYLE` is unset, the style is inferred
+from the URL (`api.saas.` → SaaS, `:8888` or a path ending in `/api/v1.0` → REST, otherwise Gateway). The join is a fixed template over two registered tables
 (`project_lines`, `evidence_extracts`) with identifier validation. No model writes SQL.
 
 **Current status:** the AWS quickstart stack `zetaris-main-9acdd8a3` (`ap-southeast-1`) is
@@ -329,7 +330,7 @@ For development, run the sidecar and backend in separate terminals, then `pnpm d
 
 Runs:
 
-- `cargo test --lib` — 16 domain and client tests.
+- `cargo test --lib` — 17 domain and client tests.
 - `pnpm test` in `meterless-world` — the World Model feature and replay assertions.
 - `pnpm conformance` — the upstream Meterless suite (8/8).
 - `pnpm build` — TypeScript check and production build.

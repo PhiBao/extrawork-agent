@@ -454,15 +454,27 @@ fn scope_finding(docs: &[Doc], objections: &[Objection]) -> Vec<Finding> {
 
 fn prior_finding(lines: &[CostLine], docs: &[Doc], objections: &[Objection]) -> Vec<Finding> {
     let Some(prior) = docs.iter().find(|d| d.kind == Kind::PriorBilling) else { return Vec::new() };
+    let duplicated: std::collections::BTreeSet<&str> = lines
+        .iter()
+        .filter(|line| line.duplicate)
+        .filter_map(|line| line.invoice.as_deref())
+        .collect();
     let mut out = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     for line in lines {
         let Some(invoice) = &line.invoice else { continue };
         if !seen.insert(invoice.clone()) { continue }
         let billed = prior.text.lines().any(|row| row.split(',').next() == Some(invoice.as_str()));
+        // A prior-billing check belongs to an objection only when that invoice is the
+        // subject of the objection. Other invoices are case-level checks.
+        let belongs_to_objection = duplicated.contains(invoice.as_str());
         out.push(Finding {
             key: format!("prior:{invoice}"),
-            objection_id: objections.iter().find(|o| o.topic == "duplicate").map(|o| o.id.clone()),
+            objection_id: if belongs_to_objection {
+                objections.iter().find(|o| o.topic == "duplicate").map(|o| o.id.clone())
+            } else {
+                None
+            },
             kind: if billed { "already_billed" } else { "not_previously_billed" }.into(),
             title: if billed {
                 format!("{invoice} already appears in prior billing")

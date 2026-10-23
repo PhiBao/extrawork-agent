@@ -476,6 +476,16 @@ resets the evidence CSV for that case.
   its conformance, the Zetaris Gateway query, the HTTP API, the exports, the browser UI.
 - **Live external services:** local Zetaris 2.4.3 and Nebius Token Factory (NVIDIA Nemotron).
 
+### Real-case effort
+
+Outreach to specialty contractors and construction bookkeepers is in progress; **no permissioned,
+redacted returned request has arrived yet** as of October 23, 2026. Both shipped cases therefore
+remain synthetic and are labelled in the UI. A public-records search found denial decisions and
+audits, but not a complete request + return note + backup package that could be used honestly.
+
+If a real record arrives, it will replace Northgate and this note will be updated. We will not relabel
+a reconstructed, composite, or public-record adaptation as customer data.
+
 ---
 
 ## Security and reliability

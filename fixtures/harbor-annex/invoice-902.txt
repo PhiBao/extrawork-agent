@@ -1,0 +1,5 @@
+INVOICE INV-902
+Vendor: Harbor Lift Co.
+Date: 2026-10-17
+Scissor lift, one day, $1,000.00.
+One line.

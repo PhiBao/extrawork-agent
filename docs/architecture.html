@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ExtraWork — data flow</title>
+<style>
+  :root{--paper:#f3eee4;--sheet:#fffdf8;--ink:#1c211e;--muted:#3e4741;--line:#d8cfc0;--accent:#9d3b28;--ok:#1e5c44}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:"Source Sans 3","Segoe UI",sans-serif}
+  main{max-width:1240px;margin:0 auto;padding:40px 24px 56px}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+  h1{font-family:Georgia,"Times New Roman",serif;font-weight:500;font-size:clamp(30px,4vw,44px);line-height:1.05;letter-spacing:-.02em;margin:0 0 10px}
+  .lede{max-width:70ch;color:var(--muted);margin:0 0 26px}
+  figure{margin:0;background:var(--sheet);border:1px solid var(--line);padding:18px}
+  .scroll{overflow-x:auto}
+  svg{display:block;min-width:1120px;height:auto}
+  figcaption{margin-top:14px;color:var(--muted);font-size:14px;max-width:80ch}
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">ExtraWork · architecture</p>
+  <h1>What the record passes through</h1>
+  <p class="lede">The database is the durable case. Zetaris is the federation boundary when configured. The World Model is a provenance projection, not the ledger.</p>
+  <figure>
+    <div class="scroll">
+      <svg viewBox="0 0 1120 660" role="img" aria-labelledby="arch-title arch-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="arch-title">ExtraWork data flow</title>
+        <desc id="arch-desc">Project records and a separate evidence file are joined by Zetaris when configured, analyzed deterministically in Rust with a bounded Nemotron pass, committed to PostgreSQL, projected into the Meterless World Model, and exported after human review.</desc>
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" fill="#5b645d"/>
+          </marker>
+          <marker id="arrow-dash" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" fill="#9d3b28"/>
+          </marker>
+        </defs>
+        <rect width="1120" height="660" fill="#f3eee4"/>
+
+        <!-- connectors first -->
+        <path d="M254 168 H288 V240 H322" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#arrow)"/>
+        <path d="M254 348 H312 V276 H322" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#arrow)"/>
+        <path d="M530 258 H592" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#arrow)"/>
+        <path d="M660 210 V138" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#arrow)"/>
+        <path d="M720 138 V202" fill="none" stroke="#9d3b28" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arrow-dash)"/>
+        <path d="M820 232 H872 V176 H892" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#arrow)"/>
+        <path d="M990 216 V282" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#arrow)"/>
+        <path d="M900 200 H888 V510 H808" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#arrow)"/>
+
+        <!-- labels -->
+        <g font-family="'IBM Plex Mono','SFMono-Regular',monospace" font-size="10.5" letter-spacing=".06em" fill="#3e4741">
+          <rect x="596" y="166" width="56" height="18" fill="#f3eee4"/>
+          <text x="600" y="179">EXTRACT</text>
+          <rect x="728" y="158" width="64" height="18" fill="#f3eee4"/>
+          <text x="732" y="171" fill="#9d3b28">VALIDATE</text>
+          <rect x="796" y="185" width="62" height="18" fill="#f3eee4"/>
+          <text x="800" y="198">COMMIT</text>
+          <rect x="1000" y="240" width="58" height="18" fill="#f3eee4"/>
+          <text x="1006" y="253">PROJECT</text>
+          <rect x="826" y="346" width="54" height="18" fill="#f3eee4"/>
+          <text x="830" y="359">REVIEW</text>
+        </g>
+
+        <!-- A -->
+        <g>
+          <rect x="64" y="120" width="190" height="96" rx="4" fill="#fffdf8" stroke="#1c211e" stroke-width="1.2"/>
+          <text x="80" y="146" font-size="13.5" font-weight="600">Project records</text>
+          <text x="80" y="166" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">RETURN NOTE · COSTS</text>
+          <text x="80" y="182" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">INVOICES · TICKET</text>
+          <text x="80" y="198" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">SCOPE · RATE SHEET</text>
+        </g>
+        <!-- B -->
+        <g>
+          <rect x="64" y="300" width="190" height="96" rx="4" fill="#fffdf8" stroke="#1c211e" stroke-width="1.2"/>
+          <text x="80" y="326" font-size="13.5" font-weight="600">Evidence extracts</text>
+          <text x="80" y="346" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">SEPARATE CSV</text>
+          <text x="80" y="362" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">LINE → EXCERPT</text>
+        </g>
+        <!-- C -->
+        <g>
+          <rect x="330" y="210" width="200" height="96" rx="4" fill="#fffdf8" stroke="#9d3b28" stroke-width="1.2" stroke-dasharray="5 4"/>
+          <text x="346" y="236" font-size="13.5" font-weight="600">Zetaris federation</text>
+          <text x="346" y="256" font-size="10.5" fill="#9d3b28" font-family="'IBM Plex Mono',monospace">OPTIONAL AT RUNTIME</text>
+          <text x="346" y="272" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">FIXED SQL TEMPLATE</text>
+          <text x="346" y="288" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">BEARER + ORG ID</text>
+        </g>
+        <!-- D focal -->
+        <g>
+          <rect x="600" y="210" width="220" height="96" rx="4" fill="#1c211e"/>
+          <text x="616" y="236" font-size="13.5" font-weight="600" fill="#f3eee4">Rust analysis</text>
+          <text x="616" y="256" font-size="10.5" fill="#d8cfc0" font-family="'IBM Plex Mono',monospace">INTEGER CENTS</text>
+          <text x="616" y="272" font-size="10.5" fill="#d8cfc0" font-family="'IBM Plex Mono',monospace">EVIDENCE STATES</text>
+          <text x="616" y="288" font-size="10.5" fill="#d8cfc0" font-family="'IBM Plex Mono',monospace">QUOTE CHECKS</text>
+        </g>
+        <!-- E -->
+        <g>
+          <rect x="600" y="56" width="220" height="80" rx="4" fill="#fffdf8" stroke="#1c211e" stroke-width="1.2"/>
+          <text x="616" y="82" font-size="13.5" font-weight="600">Nemotron</text>
+          <text x="616" y="102" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">BOUNDED EXTRACTION</text>
+          <text x="616" y="118" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">HOSTED · OPTIONAL</text>
+        </g>
+        <!-- F -->
+        <g>
+          <rect x="900" y="120" width="180" height="96" rx="4" fill="#e7dfd0" stroke="#1c211e" stroke-width="1.2"/>
+          <text x="916" y="146" font-size="13.5" font-weight="600">PostgreSQL</text>
+          <text x="916" y="166" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">CASE REVISION</text>
+          <text x="916" y="182" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">DECISIONS</text>
+          <text x="916" y="198" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">DOCUMENTS</text>
+        </g>
+        <!-- G -->
+        <g>
+          <rect x="900" y="290" width="180" height="96" rx="4" fill="#e7dfd0" stroke="#1c211e" stroke-width="1.2"/>
+          <text x="916" y="316" font-size="13.5" font-weight="600">Meterless</text>
+          <text x="916" y="332" font-size="13.5" font-weight="600">World Model</text>
+          <text x="916" y="352" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">STABLE IDS</text>
+          <text x="916" y="368" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">PROVENANCE · REPLAY</text>
+        </g>
+        <!-- H -->
+        <g>
+          <rect x="560" y="470" width="248" height="80" rx="4" fill="#fffdf8" stroke="#1c211e" stroke-width="1.2"/>
+          <rect x="560" y="470" width="4" height="80" fill="#9d3b28"/>
+          <text x="580" y="496" font-size="13.5" font-weight="600">Reviewer decision</text>
+          <text x="580" y="516" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">ACCEPT · REJECT · REQUEST</text>
+          <text x="580" y="532" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">PACKET + MANIFEST</text>
+        </g>
+
+        <!-- legend -->
+        <g font-size="11" fill="#3e4741">
+          <rect x="64" y="596" width="16" height="10" fill="#fffdf8" stroke="#1c211e"/>
+          <text x="88" y="605">Source record</text>
+          <rect x="196" y="596" width="16" height="10" fill="#1c211e"/>
+          <text x="220" y="605">Deterministic compute</text>
+          <rect x="372" y="596" width="16" height="10" fill="#e7dfd0" stroke="#1c211e"/>
+          <text x="396" y="605">Durable state</text>
+          <rect x="508" y="596" width="16" height="10" fill="#fffdf8" stroke="#9d3b28" stroke-dasharray="3 2"/>
+          <text x="532" y="605">Optional boundary</text>
+          <line x1="756" y1="601" x2="780" y2="601" stroke="#9d3b28" stroke-dasharray="5 4"/>
+          <text x="788" y="605">Return path</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Every amount is computed in Rust. The model extracts candidate text and is validated against the source; the World Model records identities and provenance. Zetaris is shown as an optional boundary because this environment has no live query credentials.</figcaption>
+  </figure>
+</main>
+</body>
+</html>

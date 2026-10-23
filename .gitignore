@@ -1,0 +1,8 @@
+target/
+node_modules/
+web/dist/
+data/
+meterless-world/data/
+.env
+*.log
+.DS_Store

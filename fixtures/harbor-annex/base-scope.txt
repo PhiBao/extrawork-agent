@@ -1,0 +1,3 @@
+BASE SCOPE
+Drawing E-201 base contract.
+Exclusions: Temporary power relocation, after-hours premium labor, and lifts not shown on drawing E-201 are excluded from the base contract.

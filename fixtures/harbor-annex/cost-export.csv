@@ -1,0 +1,5 @@
+line_id,description,category,quantity,unit,rate,amount,invoice,role
+L1,Friday overtime labor,labor,16,hour,150.00,2400.00,,journeyman
+L2,Conduit and wire,material,1,lot,2400.00,2400.00,INV-441,
+L3,Scissor lift Friday,equipment,1,day,1000.00,1000.00,INV-902,
+L4,Scissor lift Friday,equipment,1,day,1000.00,1000.00,INV-902,

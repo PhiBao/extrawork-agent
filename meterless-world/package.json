@@ -1,0 +1,17 @@
+{
+  "name": "extrawork-world",
+  "private": true,
+  "type": "module",
+  "description": "ExtraWork adapter around the pinned Meterless World Model reference. The vendor tree is Apache-2.0 and unmodified.",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "test": "tsx src/project.test.ts",
+    "conformance": "tsx vendor/conformance/runner.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.6"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

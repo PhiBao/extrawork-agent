@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ExtraWork — repair states</title>
+<style>
+  :root{--paper:#f3eee4;--sheet:#fffdf8;--ink:#1c211e;--muted:#3e4741;--line:#d8cfc0;--accent:#9d3b28;--ok:#1e5c44;--warn:#8a5a12}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:"Source Sans 3","Segoe UI",sans-serif}
+  main{max-width:1240px;margin:0 auto;padding:40px 24px 56px}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+  h1{font-family:Georgia,"Times New Roman",serif;font-weight:500;font-size:clamp(30px,4vw,44px);line-height:1.05;letter-spacing:-.02em;margin:0 0 10px}
+  .lede{max-width:72ch;color:var(--muted);margin:0 0 26px}
+  figure{margin:0;background:var(--sheet);border:1px solid var(--line);padding:18px}
+  .scroll{overflow-x:auto}
+  svg{display:block;min-width:1120px;height:auto}
+  figcaption{margin-top:14px;color:var(--muted);font-size:14px;max-width:82ch}
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">ExtraWork · repair states</p>
+  <h1>An objection stays unresolved until a record answers it</h1>
+  <p class="lede">The state describes the evidence, not the relationship. A prepared packet is the end of this flow, never an approval to bill.</p>
+  <figure>
+    <div class="scroll">
+      <svg viewBox="0 0 1120 560" role="img" aria-labelledby="flow-title flow-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="flow-title">ExtraWork repair state flow</title>
+        <desc id="flow-desc">A returned objection is checked against records and becomes supported, missing, or ambiguous. Supported corrections go to a reviewer decision. All states converge on a packet prepared with reservations; billing authority is never granted.</desc>
+        <defs>
+          <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" fill="#5b645d"/>
+          </marker>
+        </defs>
+        <rect width="1120" height="560" fill="#f3eee4"/>
+
+        <path d="M240 272 H292" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#a)"/>
+        <path d="M390 230 V124 H532" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#a)"/>
+        <path d="M480 272 H532" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#a)"/>
+        <path d="M390 314 V412 H532" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#a)"/>
+        <path d="M720 124 H792" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#a)"/>
+        <path d="M890 162 V228" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#a)"/>
+        <path d="M720 268 H752 V304 H792" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#a)"/>
+        <path d="M720 412 H736 V334 H792" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#a)"/>
+        <path d="M900 346 V402" fill="none" stroke="#5b645d" stroke-width="1.4" marker-end="url(#a)"/>
+
+        <g font-family="'IBM Plex Mono','SFMono-Regular',monospace" font-size="10.5" letter-spacing=".06em" fill="#3e4741">
+          <rect x="398" y="132" width="50" height="18" fill="#f3eee4"/>
+          <text x="402" y="145">CITES</text>
+          <rect x="760" y="282" width="34" height="18" fill="#f3eee4"/>
+          <text x="764" y="295">FIX</text>
+        </g>
+
+        <g>
+          <rect x="60" y="230" width="180" height="84" rx="4" fill="#fffdf8" stroke="#1c211e" stroke-width="1.2"/>
+          <text x="76" y="256" font-size="13.5" font-weight="600">Returned objection</text>
+          <text x="76" y="276" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">THEIR SENTENCE</text>
+          <text x="76" y="292" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">UNCHANGED</text>
+        </g>
+        <g>
+          <rect x="300" y="230" width="180" height="84" rx="4" fill="#fffdf8" stroke="#1c211e" stroke-width="1.2"/>
+          <text x="316" y="256" font-size="13.5" font-weight="600">Evidence check</text>
+          <text x="316" y="276" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">QUOTES · CENTS</text>
+          <text x="316" y="292" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">DATES · IDENTITY</text>
+        </g>
+
+        <g>
+          <rect x="540" y="86" width="180" height="76" rx="4" fill="#fffdf8" stroke="#1e5c44" stroke-width="1.3"/>
+          <rect x="540" y="86" width="4" height="76" fill="#1e5c44"/>
+          <text x="560" y="112" font-size="13.5" font-weight="600">Supported</text>
+          <text x="560" y="132" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">A RECORD ANSWERS IT</text>
+          <text x="560" y="148" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">QUOTE VERIFIED</text>
+        </g>
+        <g>
+          <rect x="540" y="230" width="180" height="76" rx="4" fill="#fffdf8" stroke="#9d3b28" stroke-width="1.3"/>
+          <rect x="540" y="230" width="4" height="76" fill="#9d3b28"/>
+          <text x="560" y="256" font-size="13.5" font-weight="600">Missing</text>
+          <text x="560" y="276" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">ASK FOR THE RECORD</text>
+          <text x="560" y="292" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">DO NOT INFER IT</text>
+        </g>
+        <g>
+          <rect x="540" y="374" width="180" height="76" rx="4" fill="#fffdf8" stroke="#8a5a12" stroke-width="1.3"/>
+          <rect x="540" y="374" width="4" height="76" fill="#8a5a12"/>
+          <text x="560" y="400" font-size="13.5" font-weight="600">Ambiguous</text>
+          <text x="560" y="420" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">KEEP THE CONFLICT</text>
+          <text x="560" y="436" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">A PERSON DECIDES</text>
+        </g>
+
+        <g>
+          <rect x="800" y="86" width="180" height="76" rx="4" fill="#fffdf8" stroke="#1c211e" stroke-width="1.2"/>
+          <text x="816" y="112" font-size="13.5" font-weight="600">Reviewer decision</text>
+          <text x="816" y="132" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">ACCEPT · REJECT</text>
+          <text x="816" y="148" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">REVISION CHECKED</text>
+        </g>
+        <g>
+          <rect x="800" y="236" width="200" height="110" rx="4" fill="#1c211e"/>
+          <text x="816" y="262" font-size="13.5" font-weight="600" fill="#f3eee4">Prepared with</text>
+          <text x="816" y="278" font-size="13.5" font-weight="600" fill="#f3eee4">reservations</text>
+          <text x="816" y="300" font-size="10.5" fill="#d8cfc0" font-family="'IBM Plex Mono',monospace">SUPPORTED TOTAL</text>
+          <text x="816" y="316" font-size="10.5" fill="#d8cfc0" font-family="'IBM Plex Mono',monospace">OPEN ITEMS LISTED</text>
+          <text x="816" y="332" font-size="10.5" fill="#d8cfc0" font-family="'IBM Plex Mono',monospace">NOT AN APPROVAL</text>
+        </g>
+        <g>
+          <rect x="800" y="410" width="200" height="76" rx="4" fill="#fffdf8" stroke="#1c211e" stroke-width="1.2"/>
+          <text x="816" y="436" font-size="13.5" font-weight="600">Packet + manifest</text>
+          <text x="816" y="456" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">QUOTES · HASHES</text>
+          <text x="816" y="472" font-size="10.5" fill="#3e4741" font-family="'IBM Plex Mono',monospace">RESERVATIONS</text>
+        </g>
+
+        <g font-size="11" fill="#3e4741">
+          <rect x="60" y="512" width="16" height="10" fill="#fffdf8" stroke="#1e5c44"/>
+          <text x="84" y="521">Supported</text>
+          <rect x="168" y="512" width="16" height="10" fill="#fffdf8" stroke="#9d3b28"/>
+          <text x="192" y="521">Missing</text>
+          <rect x="264" y="512" width="16" height="10" fill="#fffdf8" stroke="#8a5a12"/>
+          <text x="288" y="521">Ambiguous</text>
+          <rect x="378" y="512" width="16" height="10" fill="#fffdf8" stroke="#1c211e"/>
+          <text x="402" y="521">Reviewer decision</text>
+          <rect x="520" y="512" width="16" height="10" fill="#1c211e"/>
+          <text x="544" y="521">Prepared state</text>
+          <text x="690" y="521" font-style="italic">Billing authority is never granted by this flow.</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>A supported finding can still carry a reservation (for example, the scope is excluded but the price was never approved). Uploading a record recomputes the finding and preserves the reviewer's earlier decisions.</figcaption>
+  </figure>
+</main>
+</body>
+</html>

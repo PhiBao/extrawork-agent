@@ -346,8 +346,13 @@ docker run -d --name extrawork-pg \
 ./scripts/demo.sh
 ```
 
-This starts PostgreSQL, installs dependencies if needed, builds the web client, starts the Meterless
-sidecar on `:8091`, and runs the Rust server on `http://127.0.0.1:8081`.
+This starts PostgreSQL, starts the local Zetaris platform if its bundle is present, starts the
+Meterless sidecar on `:8091`, builds the web client, runs the Rust server on
+`http://127.0.0.1:8081`, and resets both cases to revision 1.
+
+If the Zetaris bundle or Nemotron key is absent, the app still runs: Zetaris falls back to the
+separate evidence CSV (`local_two_source`) and objections fall back to the heuristic classifier.
+The proof panel says which path ran.
 
 For development, run the sidecar and backend in separate terminals, then `pnpm dev` in `web/`.
 

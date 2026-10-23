@@ -2,11 +2,17 @@
 
 ## What is verified
 
+- **Local Zetaris 2.4.3** is running from the licensed bundle. `verify.sh` passes **9/9**: postgres,
+  driver, API, UI, init, bootstrap, UI config, admin login, and a query through UI → API → driver →
+  Spark.
+- ExtraWork's Gateway client runs a live `SELECT 1` and the four-row case join. The proof records
+  `joinMode: zetaris_live`, `extractsUsed: 4`, `totalCount: 4`, and `queryClosed: true`.
+- The two case tables are registered from a local PostgreSQL datasource (`harbor_pg`).
 - The AWS quickstart stack `zetaris-main-9acdd8a3` is `CREATE_COMPLETE` in `ap-southeast-1`.
 - The registration callback returned HTTP 200.
 - The EKS cluster `zetaris-extrawork-8b3246e1` is **ACTIVE**, with two running `m7i-flex.large` nodes.
 - Zetaris created the Postgres stateful set and the Spark operator.
-- The application phase stopped when the AWS Load Balancer Controller tried to create a load balancer.
+- The AWS application phase stopped when the Load Balancer Controller tried to create a load balancer.
 
 ## The exact AWS block
 
@@ -32,26 +38,29 @@ It is an account-level AWS restriction. Only AWS Support can lift it.
 
 ## Options
 
-### 1. Local Zetaris (fastest, real platform)
+### 1. Local Zetaris (installed and verified)
 
-The licensed bundle runs on this machine (16 GB RAM, 16 CPUs, 774 GB free).
+The licensed bundle runs on this machine at `~/zetaris-local/zetaris-platform`.
 
-1. Sign in at <https://cloud.enterprise.zetaris.com/dashboard/download> with the account used to
-   create the AWS cluster.
-2. Download `zetaris-platform.zip` and keep the registry sign-in command shown there.
-3. Put the zip at `vendor/zetaris-platform.zip` and run the registry login.
-4. Run:
+- UI/Gateway: `http://127.0.0.1:3010` (port 3000 was already used by another app).
+- API: `http://127.0.0.1:8888`; JDBC: `127.0.0.1:10000`.
+- Admin: `admin@extrawork.dev`; password in `~/zetaris-local/zetaris-platform/.admin-password`.
+- Organisation id: `1`.
+- Vendor `verify.sh`: **9/9 passed**, including login and a query through UI → API → driver → Spark.
+- The app's live join uses `harbor_pg.project_lines` and `harbor_pg.evidence_extracts`, registered
+  from the local PostgreSQL datasource. `project_lines` came back with four rows and the query closed.
+
+The bundle's `.env` points at `zetarishackathon.azurecr.io`. Signing in there with the Zetaris Cloud
+account name failed because the registry requires the separate token issued on the download page. The
+images are also published under `zetregistry.azurecr.io`, and the running AWS cluster's image-pull
+secret authenticates there. This install uses that mirror:
 
 ```bash
-./scripts/setup-local-zetaris.sh
+ZETARIS_IMAGE_REGISTRY=zetregistry.azurecr.io ./scripts/setup-local-zetaris.sh
 ```
 
-The script configures the supplied `.env`, generates an admin password in
-`~/zetaris-local/.admin-password`, starts Compose, waits for the Gateway, and writes the Gateway
-connection to `.env`.
-
-The bundle and registry access are licensed to the Zetaris account holder and are not included in
-this repository.
+The setup script rewrites the three image references and the copied `preflight.sh` registry check to
+the mirror. The supplied `.env`, admin password, and image pull credentials are not committed.
 
 ### 2. AWS Support
 

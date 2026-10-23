@@ -296,11 +296,17 @@ export function App() {
       </div>
       <details className="proof">
         <summary>How this was checked</summary>
-        <p>{file.sourceAgreement} Evidence extracts were read from a separate CSV and joined to the project-line table.</p>
+        <p>
+          {file.sourceAgreement}{" "}
+          {file.proof?.joinMode === "zetaris_live"
+            ? "Evidence extracts came from Zetaris through the Gateway."
+            : "Evidence extracts were read from a separate CSV and joined to the project-line table."}
+        </p>
         <p>World Model {file.proof?.meterless?.commit?.slice(0, 12) ?? "not recorded"} · {file.proof?.meterless?.state}. Replay unchanged: {String(file.proof?.meterless?.result?.unchangedOnReplay ?? "not run")}.</p>
         <p>
           Zetaris · {file.proof?.zetaris?.state ?? "not run"}
           {file.proof?.zetaris?.live ? ` · ${file.proof?.zetaris?.style ?? "live"}` : ""}
+          {file.proof?.zetaris?.totalCount != null ? ` · ${file.proof.zetaris.totalCount} rows` : ""}
           {file.proof?.zetaris?.detail ? ` — ${file.proof?.zetaris?.detail}` : ""}
         </p>
         <p>{file.proof?.nemotron?.detail ?? "Rules engine read the objections."}</p>

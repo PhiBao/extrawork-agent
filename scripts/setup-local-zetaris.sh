@@ -14,6 +14,7 @@ BUNDLE="${1:-$ROOT/vendor/zetaris-platform.zip}"
 TARGET="${ZETARIS_LOCAL_DIR:-$HOME/zetaris-local}"
 EMAIL="${ZETARIS_ADMIN_EMAIL:-admin@extrawork.dev}"
 ORG="${ZETARIS_ADMIN_ORG:-ExtraWork}"
+IMAGE_REGISTRY="${ZETARIS_IMAGE_REGISTRY:-}"
 
 if [ ! -e "$BUNDLE" ]; then
   cat <<EOF
@@ -48,6 +49,34 @@ cd "$TARGET"
 [ -f docker-compose.yml ] || { echo "docker-compose.yml not found in $TARGET"; exit 1; }
 [ -f .env ] || { echo ".env not found; use the .env supplied with the bundle."; exit 1; }
 
+if [ -n "$IMAGE_REGISTRY" ]; then
+  echo "Using image registry: $IMAGE_REGISTRY"
+  python3 - "$TARGET" "$IMAGE_REGISTRY" <<'PY'
+import sys
+from pathlib import Path
+target = Path(sys.argv[1]); registry = sys.argv[2].rstrip("/")
+env = target / ".env"
+out = []
+for line in env.read_text().splitlines():
+    for key in ("DRIVER_IMAGE", "API_IMAGE", "UI_IMAGE"):
+        if line.startswith(key + "="):
+            value = line.split("=", 1)[1]
+            repo_tag = value.split("/", 1)[1]
+            line = f"{key}={registry}/{repo_tag}"
+    out.append(line)
+env.write_text("\n".join(out) + "\n")
+# The supplied preflight checks a hard-coded registry; point it at the mirror
+# actually used by this bundle copy. docker compose pull remains the real check.
+preflight = target / "preflight.sh"
+if preflight.exists():
+    text = preflight.read_text()
+    import re
+    text = re.sub(r"^REGISTRY=.*$", f"REGISTRY={registry}", text, count=1, flags=re.M)
+    preflight.write_text(text)
+print(f"images now use {registry}")
+PY
+fi
+
 python3 - "$TARGET" "$EMAIL" "$ORG" <<'PY'
 import secrets, string, sys
 from pathlib import Path
@@ -76,9 +105,9 @@ updates = {
     "ZSPARK_DRIVER_CORES": "2",
     "ZSPARK_MASTER_URL": "local[2]",
     "ZETARIS_API_MAX_HEAP": "1g",
-    "UI_PORT": "3000",
-    "ALLOWED_ORIGINS": "http://localhost:3000",
-    "GUI_URL": "http://localhost:3000",
+    "UI_PORT": "3010",
+    "ALLOWED_ORIGINS": "http://localhost:3010",
+    "GUI_URL": "http://localhost:3010",
     "COMPOSE_PROFILES": "",
     "ZETARIS_SEED_TPCH": "true",
 }
@@ -127,7 +156,8 @@ env = root / ".env"
 lines = env.read_text().splitlines() if env.exists() else []
 values = {
     "ZETARIS_API_STYLE": "gateway",
-    "ZETARIS_BASE_URL": "http://127.0.0.1:3000",
+    "ZETARIS_BASE_URL": "http://127.0.0.1:3010",
+    "ZETARIS_ORG_ID": "1",
     "ZETARIS_USERNAME": email,
     "ZETARIS_PASSWORD": password,
 }

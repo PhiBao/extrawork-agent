@@ -12,7 +12,7 @@ Say "synthetic" once, early. Do not claim recovery or approval.
 | 1:35–2:05 | Upload `rate-approval.eml` | "Now add the missing record. The objection becomes answered, and the source pane shows the approval sentence. The duplicate decision is still where I left it." |
 | 2:05–2:30 | Objection 03, scope exclusion, directive | "The base contract excludes temporary power relocation. Apex directed it the night of the pour. That supports the scope position. It still does not approve the price." |
 | 2:30–2:55 | Export packet + zip | "The packet carries the supported total, every reservation, and an evidence manifest with document hashes. It is prepared for review, not approved to bill." |
-| 2:55–3:20 | **How this was checked** | "Two sources were joined: PostgreSQL project lines and a separate evidence file. The Meterless World Model recorded the case with stable IDs and the replay was unchanged. Zetaris is registered, but this machine has no query key, so no live query is claimed." |
+| 2:55–3:20 | **How this was checked** | "Zetaris joined the registered project-line and evidence tables through its Gateway; four extracts came back and the query was closed. The Meterless World Model recorded the case with stable IDs and the replay was unchanged. This is the local Zetaris platform; the AWS cluster is blocked by an account-level load-balancer restriction." |
 | 3:20–3:30 | Architecture diagram | "Zetaris federates when configured. Rust owns the money and the rules. Nemotron can extract candidates, but it cannot set a total." |
 
 ## Do not say

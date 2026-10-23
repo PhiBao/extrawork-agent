@@ -337,11 +337,17 @@ async fn query_gateway(config: &ZetarisConfig, http: &reqwest::Client, sql: Stri
         .or_else(|| body.get("rows").and_then(|v| v.as_array()))
         .cloned()
         .unwrap_or_default();
+    let headers = body
+        .get("headers")
+        .and_then(|v| v.as_array())
+        .map(|items| items.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
     Ok(ZetarisQuery {
         request_id,
         sql,
         total_count: rows.len() as i64,
         record_sample: rows.into_iter().take(5).collect(),
+        headers,
         live: true,
         style: "gateway".into(),
         query_closed: true,
@@ -370,6 +376,7 @@ async fn query_rest(config: &ZetarisConfig, http: &reqwest::Client, sql: String)
         sql,
         total_count: rows.len() as i64,
         record_sample: rows.into_iter().take(5).collect(),
+        headers: Vec::new(),
         live: true,
         style: "rest".into(),
         query_closed: true,
@@ -410,6 +417,7 @@ async fn query_saas(config: &ZetarisConfig, http: &reqwest::Client, sql: String)
         sql,
         total_count: total,
         record_sample: records.into_iter().take(5).collect(),
+        headers: Vec::new(),
         live: true,
         style: "saas".into(),
         query_closed: closed,
@@ -423,6 +431,7 @@ pub struct ZetarisQuery {
     pub sql: String,
     pub total_count: i64,
     pub record_sample: Vec<Value>,
+    pub headers: Vec<String>,
     pub live: bool,
     pub style: String,
     pub query_closed: bool,

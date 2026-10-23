@@ -110,6 +110,16 @@ async fn migrate(db: &PgPool) -> Result<(), sqlx::Error> {
     )
     .execute(db)
     .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS case_extracts (
+            case_id TEXT NOT NULL,
+            line_id TEXT NOT NULL,
+            document TEXT NOT NULL,
+            excerpt TEXT NOT NULL
+        )",
+    )
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -127,6 +137,7 @@ async fn reset_harbor(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query("DELETE FROM decisions WHERE case_id = 'harbor-annex'").execute(&app.db).await?;
     sqlx::query("DELETE FROM documents WHERE case_id = 'harbor-annex'").execute(&app.db).await?;
     sqlx::query("DELETE FROM project_lines WHERE case_id = 'harbor-annex'").execute(&app.db).await?;
+    sqlx::query("DELETE FROM case_extracts WHERE case_id = 'harbor-annex'").execute(&app.db).await?;
     let meta = json!({
         "project": "Harbor Annex",
         "requestNumber": "COR-184",
@@ -191,6 +202,72 @@ async fn load_decisions(app: &App, case_id: &str) -> Result<Vec<Decision>, sqlx:
         .into_iter()
         .map(|row| Decision { finding_key: row.get("finding_key"), decision: row.get("decision") })
         .collect())
+}
+
+async fn load_case_extracts(app: &App, case_id: &str) -> Result<Vec<domain::ExtractRow>, sqlx::Error> {
+    let rows = sqlx::query("SELECT line_id, document, excerpt FROM case_extracts WHERE case_id = $1 ORDER BY line_id, document")
+        .bind(case_id)
+        .fetch_all(&app.db)
+        .await?;
+    if rows.is_empty() {
+        return Ok(domain::parse_extracts(&evidence_text(app, case_id)).unwrap_or_default());
+    }
+    Ok(rows
+        .into_iter()
+        .map(|row| domain::ExtractRow {
+            line_id: row.get("line_id"),
+            document: row.get("document"),
+            excerpt: row.get("excerpt"),
+        })
+        .collect())
+}
+
+async fn replace_case_extracts(app: &App, case_id: &str, rows: &[domain::ExtractRow]) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM case_extracts WHERE case_id = $1").bind(case_id).execute(&app.db).await?;
+    for row in rows {
+        sqlx::query("INSERT INTO case_extracts (case_id, line_id, document, excerpt) VALUES ($1, $2, $3, $4)")
+            .bind(case_id)
+            .bind(&row.line_id)
+            .bind(&row.document)
+            .bind(&row.excerpt)
+            .execute(&app.db)
+            .await?;
+    }
+    Ok(())
+}
+
+fn extracts_from_query(query: &zetaris::ZetarisQuery) -> Vec<domain::ExtractRow> {
+    let index = |name: &str| query.headers.iter().position(|h| h == name);
+    let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    if let (Some(line_idx), Some(doc_idx), Some(excerpt_idx)) =
+        (index("line_id"), index("document"), index("excerpt"))
+    {
+        for row in &query.record_sample {
+            let Some(values) = row.as_array() else { continue };
+            let get = |idx: usize| values.get(idx).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let (line_id, document, excerpt) = (get(line_idx), get(doc_idx), get(excerpt_idx));
+            if line_id.is_empty() || document.is_empty() || excerpt.is_empty() {
+                continue;
+            }
+            if seen.insert(format!("{line_id}|{document}|{excerpt}")) {
+                out.push(domain::ExtractRow { line_id, document, excerpt });
+            }
+        }
+    } else {
+        for row in &query.record_sample {
+            let Some(object) = row.as_object() else { continue };
+            let get = |key: &str| object.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let (line_id, document, excerpt) = (get("line_id"), get("document"), get("excerpt"));
+            if line_id.is_empty() || document.is_empty() || excerpt.is_empty() {
+                continue;
+            }
+            if seen.insert(format!("{line_id}|{document}|{excerpt}")) {
+                out.push(domain::ExtractRow { line_id, document, excerpt });
+            }
+        }
+    }
+    out
 }
 
 async fn sync_project_lines(app: &App, case_id: &str) -> Result<(), sqlx::Error> {
@@ -299,7 +376,9 @@ async fn compose(app: &App, case_id: &str) -> Result<Value, sqlx::Error> {
     let docs = load_docs(app, case_id).await?;
     let decisions = load_decisions(app, case_id).await?;
     let amounts = db_amounts(app, case_id).await?;
-    let extracts = domain::parse_extracts(&evidence_text(app, case_id)).unwrap_or_default();
+    let extracts = load_case_extracts(app, case_id).await.unwrap_or_else(|_| {
+        domain::parse_extracts(&evidence_text(app, case_id)).unwrap_or_default()
+    });
     let analysis = domain::analyze(&docs, &extracts, &amounts, &decisions);
     let documents: Vec<Value> = docs
         .iter()
@@ -503,6 +582,36 @@ fn attachment(content_type: &str, filename: &str, body: Vec<u8>) -> Response {
 }
 
 async fn project_world(app: &App, case_id: &str) -> Result<(), String> {
+    let mut join_mode = "local_two_source";
+    let mut zetaris_proof = if app.zetaris.is_some() {
+        json!({"state": "pending"})
+    } else {
+        serde_json::to_value(zetaris::not_configured()).unwrap_or(json!({}))
+    };
+    if let Some(config) = &app.zetaris {
+        match zetaris::query_join(config, &app.http, case_id).await {
+            Ok(query) => {
+                let rows = extracts_from_query(&query);
+                if !rows.is_empty() {
+                    replace_case_extracts(app, case_id, &rows).await.map_err(|e| e.to_string())?;
+                    join_mode = "zetaris_live";
+                }
+                zetaris_proof = json!({
+                    "state": "connected",
+                    "live": true,
+                    "style": query.style,
+                    "detail": format!("Gateway join returned {} extracts from the registered tables.", rows.len()),
+                    "requestId": query.request_id,
+                    "totalCount": query.total_count,
+                    "extractsUsed": rows.len(),
+                    "queryClosed": query.query_closed
+                });
+            }
+            Err(err) => {
+                zetaris_proof = json!({"state": "error", "live": false, "detail": err});
+            }
+        }
+    }
     let view = compose(app, case_id).await.map_err(|e| e.to_string())?;
     let revision = view.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
     let projection = json!({
@@ -520,26 +629,10 @@ async fn project_world(app: &App, case_id: &str) -> Result<(), String> {
         object.remove("shape");
     }
     let nemotron = nemotron_status(app, &view).await;
-    let zetaris = if let Some(config) = &app.zetaris {
-        match zetaris::query_join(config, &app.http, case_id).await {
-            Ok(query) => json!({
-                "state": "connected",
-                "live": true,
-                "style": query.style,
-                "requestId": query.request_id,
-                "totalCount": query.total_count,
-                "recordSample": query.record_sample,
-                "queryClosed": query.query_closed
-            }),
-            Err(err) => json!({"state": "error", "live": false, "detail": err}),
-        }
-    } else {
-        serde_json::to_value(zetaris::not_configured()).unwrap_or(json!({}))
-    };
     let proof = json!({
-        "joinMode": "local_two_source",
+        "joinMode": join_mode,
         "joinDetail": view.get("sourceAgreement").cloned().unwrap_or(json!("")),
-        "zetaris": zetaris,
+        "zetaris": zetaris_proof,
         "meterless": {
             "state": if status.is_success() { "recorded" } else { "error" },
             "engine": "world-model",

@@ -176,33 +176,41 @@ username/password login at `/api/auth/login`. If `ZETARIS_API_STYLE` is unset, t
 from the URL (`api.saas.` → SaaS, `:8888` or a path ending in `/api/v1.0` → REST, otherwise Gateway). The join is a fixed template over two registered tables
 (`project_lines`, `evidence_extracts`) with identifier validation. No model writes SQL.
 
-**Current status:** the AWS quickstart stack `zetaris-main-9acdd8a3` (`ap-southeast-1`) is
-`CREATE_COMPLETE`, its callback returned 200, and the EKS cluster `zetaris-extrawork-8b3246e1` is
-**ACTIVE** with two running nodes. The application phase then stopped at the AWS Load Balancer
-Controller: this AWS account is under an account-level restriction, and every load-balancer creation
-returns `OperationNotPermittedException — This AWS account currently does not support creating load
-balancers` (including from root, and in other regions). Target groups and nodes work; only LB creation
-is blocked. No Gateway URL or API key exists yet.
+**Current status:** Zetaris is **live and used by the findings** through a local install of the
+licensed platform (the same 2.4.3 bundle), because the AWS account is under an account-level load
+balancer restriction:
 
-The app does not claim a live query. It performs the same join locally across **two independently
-stored sources** — PostgreSQL project lines and a separate evidence CSV — and reports that truthfully
-in the proof panel. The supported local Zetaris bundle is the fastest path to a real query; see
-[`docs/ZETARIS.md`](docs/ZETARIS.md) and `scripts/setup-local-zetaris.sh`. The AWS Support case text is
-in [`docs/AWS-ELB-CASE.md`](docs/AWS-ELB-CASE.md).
+- Local platform: all nine vendor checks pass, including login and a query through UI → API → driver
+  → Spark. ExtraWork runs the real join through the Gateway proxy; the proof records
+  `joinMode: zetaris_live`, four extracts, and a closed query.
+- AWS: the quickstart stack `zetaris-main-9acdd8a3` is `CREATE_COMPLETE`, the callback returned 200,
+  and EKS `zetaris-extrawork-8b3246e1` is **ACTIVE** with two nodes. The application phase stopped at
+  the AWS Load Balancer Controller: every load-balancer creation returns
+  `OperationNotPermittedException — This AWS account currently does not support creating load
+  balancers` (including from root, and in `us-east-1`). Target groups and nodes work; only LB creation
+  is blocked.
 
-To connect the real workspace: create the cluster in Zetaris Cloud (`Compute > Clusters`), copy the
-Gateway URL and either an API key or the organisation credentials, then set:
+The AWS block and the local setup are documented in [`docs/ZETARIS.md`](docs/ZETARIS.md); the support
+case text is in [`docs/AWS-ELB-CASE.md`](docs/AWS-ELB-CASE.md). When the Gateway is unavailable,
+ExtraWork falls back to the local PostgreSQL + evidence-CSV join and labels it `local_two_source`.
+
+The verified local setup uses:
 
 ```bash
 ZETARIS_API_STYLE=gateway
-ZETARIS_BASE_URL=https://your-cluster-gateway
-ZETARIS_ORG_ID=...
-ZETARIS_API_KEY=...          # or ZETARIS_USERNAME + ZETARIS_PASSWORD
+ZETARIS_BASE_URL=http://127.0.0.1:3010
+ZETARIS_ORG_ID=1
+ZETARIS_USERNAME=admin@extrawork.dev
+ZETARIS_PASSWORD=...          # kept in the local .admin-password file
+ZETARIS_PROJECT_TABLE=harbor_pg.project_lines
+ZETARIS_EVIDENCE_TABLE=harbor_pg.evidence_extracts
 ```
 
-All three client paths are exercised over real HTTP against a contract mock
-(`scripts/mock_zetaris.py`); see `scripts/check.sh`. The mock is not Zetaris and is never presented as
-live vendor evidence.
+`scripts/setup-local-zetaris.sh` configures the supplied bundle, starts it on port 3010 (3000 is
+commonly occupied), writes the settings into `.env`, and the live join reads the two tables
+registered from the local Postgres datasource. All three client paths are also exercised over real
+HTTP against a contract mock (`scripts/mock_zetaris.py`); see `scripts/check.sh`. The mock is not
+Zetaris and is never presented as live vendor evidence.
 
 ### Meterless integration
 
@@ -336,7 +344,7 @@ For development, run the sidecar and backend in separate terminals, then `pnpm d
 
 Runs:
 
-- `cargo test --lib` — 17 domain and client tests.
+- `cargo test --lib` — 18 domain and client tests.
 - `pnpm test` in `meterless-world` — the World Model feature and replay assertions.
 - `pnpm conformance` — the upstream Meterless suite (8/8).
 - `pnpm build` — TypeScript check and production build.
@@ -424,8 +432,11 @@ seeded records, clears decisions, and resets the evidence CSV.
 | Meterless World Model engine used in a working feature | **Yes — projection on every revision, verified by test and conformance** |
 | World Model replay idempotent for the same projection | **Verified by test** |
 | Zetaris client for Gateway, REST, and SaaS surfaces | **Implemented; tested against the published shapes and a local HTTP contract mock** |
-| Live Zetaris query | **Not performed — cluster is active but the AWS account blocks load balancers; no Gateway yet** |
-| AWS ELB block diagnosed | **Yes — account-level `OperationNotPermittedException`, reproduced as root and in `us-east-1`** |
+| Live Zetaris query | **Yes — local Zetaris 2.4.3 Gateway → driver → registered Postgres datasource; `SELECT 1` and the four-row case join** |
+| Zetaris rows used in the findings | **Yes — `joinMode: zetaris_live`, four extracts, query closed** |
+| Local fallback when Zetaris is down | **Yes — PostgreSQL + separate evidence CSV, labelled `local_two_source`** |
+| AWS managed cluster | **EKS active, application phase blocked by account-level AWS ELB restriction** |
+| AWS ELB block diagnosed | **Yes — `OperationNotPermittedException`, reproduced as root and in `us-east-1`** |
 | AWS quickstart registration | **Verified: stack `CREATE_COMPLETE`, callback HTTP 200** |
 | Hosted Nemotron extraction | **Not performed here — key absent; rules engine used and labelled** |
 | Local two-source join (PostgreSQL + evidence CSV) | **Live in the demo** |

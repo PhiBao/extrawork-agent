@@ -6,16 +6,22 @@ ExtraWork is an agentic evidence workspace for one costly, recurring moment: a s
 contractor's request for extra work comes back rejected, and someone has to reconstruct what the
 records actually support before resubmitting it.
 
-The first case in the app is a synthetic project file, `COR-184`, returned by a general contractor
-with three objections: a scissor lift billed twice, no written approval of a $150 overtime rate, and
-an unconfirmed scope position. ExtraWork resolves the duplicate, separates work evidence from price
-authority, shows the exact sentences behind each conclusion, and prepares a review packet that a
-person still has to sign off on.
+Two synthetic project files ship in the app:
+
+- `COR-184` (Harbor Annex) has a scissor lift billed twice, no written approval of a $150 overtime
+  rate, and an unconfirmed scope position.
+- `CHG-207` (Northgate Plant) has a valve package short-shipped by two units, no signed ticket for a
+  Saturday crew, and a crane rental outside the base scope.
+
+ExtraWork resolves what the records support, separates work evidence from price authority, keeps the
+unanswered objection visible, and prepares a review packet that a person still has to sign off on.
+The second case exists to prove the rules are not a single fixture: it adds a quantity shortfall and a
+deliberate refusal.
 
 It is deliberately **not** a claims chatbot, a change-order dashboard, or an "AI will get you paid"
 product. It prepares a request for contractor review. It does not authorize billing.
 
-> **Synthetic demo:** every record in the shipped case is fabricated and labelled as such. No money
+> **Synthetic demo:** every record in both shipped cases is fabricated and labelled as such. No money
 > was recovered, no claim was approved, and no invoice was submitted.
 
 ---
@@ -298,7 +304,7 @@ server/            Rust domain, HTTP API, extraction, Zetaris client
   src/main.rs      HTTP routes, persistence, export, projection
 web/               React client and visual system
 meterless-world/   pinned World Model reference + adapter + feature test
-fixtures/          synthetic Harbor Annex records
+fixtures/          synthetic Harbor Annex and Northgate Plant records
 docs/              architecture and repair-state diagrams
 scripts/           demo and check scripts
 ```
@@ -344,7 +350,7 @@ For development, run the sidecar and backend in separate terminals, then `pnpm d
 
 Runs:
 
-- `cargo test --lib` — 18 domain and client tests.
+- `cargo test --lib` — 21 domain and client tests, including both cases.
 - `pnpm test` in `meterless-world` — the World Model feature and replay assertions.
 - `pnpm conformance` — the upstream Meterless suite (8/8).
 - `pnpm build` — TypeScript check and production build.
@@ -401,7 +407,12 @@ Try this order:
    direction is not a price approval.
 6. Download **the review packet** and **the record zip**. Both include the reservations and sources.
 7. Open **How this was checked** to see the join status, the World Model commit, replay result, and
-   the Zetaris boundary.
+   the Zetaris query.
+8. Switch to **CHG-207 · Northgate Plant**. Accept the two-unit shortfall and watch the line
+   adjustment; select the Saturday-crew objection to see the refusal and the next request.
+
+A timed shot list and narration guardrails are in `docs/DEMO.md`. The submission deck is
+`docs/deck.html` (printable to PDF from a browser).
 
 A timed shot list and narration guardrails are in `docs/DEMO.md`. The submission deck is
 `docs/deck.html` (printable to PDF from a browser).
@@ -416,8 +427,9 @@ A timed shot list and narration guardrails are in `docs/DEMO.md`. The submission
 
 ### Resetting
 
-Use **Reset the example** in the app or `POST /api/cases/harbor-annex/reset`. This restores the nine
-seeded records, clears decisions, and resets the evidence CSV.
+Use **Reset the example** in the app, or `POST /api/cases/harbor-annex/reset` /
+`POST /api/cases/northgate-mechanical/reset`. This restores the seeded records, clears decisions, and
+resets the evidence CSV for that case.
 
 ---
 
@@ -425,30 +437,30 @@ seeded records, clears decisions, and resets the evidence CSV.
 
 | Claim | Status |
 |---|---|
-| Duplicate detection, rate separation, scope matching, prior-billing check | **Implemented and unit-tested** |
-| Supported total and reservation logic | **Implemented and unit-tested** |
+| Duplicate, quantity shortfall, rate separation, missing ticket, scope, prior-billing checks | **Implemented and unit-tested on both cases** |
+| Supported total, line adjustment, and reservation logic | **Implemented and unit-tested** |
 | Evidence quotes exist in their named documents | **Asserted in tests** |
 | Prompt injection cannot change the total | **Unit-tested** |
 | Meterless World Model engine used in a working feature | **Yes — projection on every revision, verified by test and conformance** |
 | World Model replay idempotent for the same projection | **Verified by test** |
 | Zetaris client for Gateway, REST, and SaaS surfaces | **Implemented; tested against the published shapes and a local HTTP contract mock** |
-| Live Zetaris query | **Yes — local Zetaris 2.4.3 Gateway → driver → registered Postgres datasource; `SELECT 1` and the four-row case join** |
-| Zetaris rows used in the findings | **Yes — `joinMode: zetaris_live`, four extracts, query closed** |
+| Live Zetaris query | **Yes — local Zetaris 2.4.3 Gateway → driver → registered Postgres datasource; `SELECT 1`, a 4-row Harbor join, and a 5-row Northgate join** |
+| Zetaris rows used in the findings | **Yes — `joinMode: zetaris_live`, query closed** |
 | Local fallback when Zetaris is down | **Yes — PostgreSQL + separate evidence CSV, labelled `local_two_source`** |
-| AWS managed cluster | **EKS active, application phase blocked by account-level AWS ELB restriction** |
+| AWS managed cluster | **Deleted after diagnosis; the account-level ELB restriction remains** |
 | AWS ELB block diagnosed | **Yes — `OperationNotPermittedException`, reproduced as root and in `us-east-1`** |
 | AWS quickstart registration | **Verified: stack `CREATE_COMPLETE`, callback HTTP 200** |
 | Hosted Nemotron extraction | **Not performed here — key absent; rules engine used and labelled** |
-| Local two-source join (PostgreSQL + evidence CSV) | **Live in the demo** |
 | Money recovered / claim approved / invoice sent | **No — explicitly out of scope** |
 | Cursor use | **Not verified; not claimed** |
 
 ### Synthetic versus real
 
-- **Synthetic:** all nine Harbor Annex documents, the cost lines, the approvals, the return note.
+- **Synthetic:** all Harbor Annex and Northgate Plant documents, cost lines, approvals, and return
+  notes.
 - **Real:** the Rust analysis, the PostgreSQL records, the file parsing, the World Model sidecar and
-  its conformance, the HTTP API, the exports, the browser UI.
-- **Configured but unexercised:** Zetaris live query, NVIDIA hosted inference.
+  its conformance, the Zetaris Gateway query, the HTTP API, the exports, the browser UI.
+- **Configured but unexercised:** NVIDIA hosted inference.
 
 ---
 
@@ -494,7 +506,7 @@ seeded records, clears decisions, and resets the evidence CSV.
 
 ### Current limitations
 
-- One seeded case and one project. Multi-case intake is not built.
+- Two seeded cases. Arbitrary case intake and per-tenant storage are not built.
 - USD only; no tax, retainage, or markup engine.
 - Rules cover duplicates, rate authority, scope exclusion, and prior billing. They are intentionally
   narrow and transparent.

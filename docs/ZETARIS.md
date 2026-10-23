@@ -5,14 +5,18 @@
 - **Local Zetaris 2.4.3** is running from the licensed bundle. `verify.sh` passes **9/9**: postgres,
   driver, API, UI, init, bootstrap, UI config, admin login, and a query through UI → API → driver →
   Spark.
-- ExtraWork's Gateway client runs a live `SELECT 1` and the four-row case join. The proof records
-  `joinMode: zetaris_live`, `extractsUsed: 4`, `totalCount: 4`, and `queryClosed: true`.
-- The two case tables are registered from a local PostgreSQL datasource (`harbor_pg`).
+- ExtraWork's Gateway client runs a live `SELECT 1` plus the case joins: **4 rows for Harbor Annex**
+  and **5 rows for Northgate Plant**. The proof records `joinMode: zetaris_live`, the extract count,
+  and `queryClosed: true`.
+- The two case tables are registered from a local PostgreSQL datasource (`harbor_pg`) and hold both
+  cases.
 - The AWS quickstart stack `zetaris-main-9acdd8a3` is `CREATE_COMPLETE` in `ap-southeast-1`.
 - The registration callback returned HTTP 200.
-- The EKS cluster `zetaris-extrawork-8b3246e1` is **ACTIVE**, with two running `m7i-flex.large` nodes.
-- Zetaris created the Postgres stateful set and the Spark operator.
+- The EKS cluster `zetaris-extrawork-8b3246e1` reached **ACTIVE** with two running nodes, then was
+  deleted during the AWS cleanup. Zetaris had created the Postgres stateful set and Spark operator.
 - The AWS application phase stopped when the Load Balancer Controller tried to create a load balancer.
+- All billable AWS resources from the Zetaris stack were removed: EKS, nodes, EFS, EBS, NAT, EIP,
+  VPC, S3, IAM roles, log group. No running Zetaris AWS resources remain.
 
 ## The exact AWS block
 
@@ -48,7 +52,8 @@ The licensed bundle runs on this machine at `~/zetaris-local/zetaris-platform`.
 - Organisation id: `1`.
 - Vendor `verify.sh`: **9/9 passed**, including login and a query through UI → API → driver → Spark.
 - The app's live join uses `harbor_pg.project_lines` and `harbor_pg.evidence_extracts`, registered
-  from the local PostgreSQL datasource. `project_lines` came back with four rows and the query closed.
+  from the local PostgreSQL datasource. Harbor returns four rows and Northgate five; both queries are
+  closed after reading.
 
 The bundle's `.env` points at `zetarishackathon.azurecr.io`. Signing in there with the Zetaris Cloud
 account name failed because the registry requires the separate token issued on the download page. The

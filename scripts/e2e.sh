@@ -60,4 +60,30 @@ curl -sf -X POST "$BASE/api/cases/harbor-annex/reset" >/dev/null
 [ "$(curl -sf "$BASE/api/cases/harbor-annex" | json 'd["revision"]')" = "1" ] || fail "reset revision"
 pass "reset restores the example"
 
+curl -sf -X POST "$BASE/api/cases/northgate-mechanical/reset" >/dev/null
+ng=$(curl -sf "$BASE/api/cases/northgate-mechanical")
+[ "$(echo "$ng" | json 'd["project"]')" = "Northgate Plant" ] || fail "northgate project"
+[ "$(echo "$ng" | json 'd["submittedCents"]')" = "870000" ] || fail "northgate submitted"
+[ "$(echo "$ng" | json 'd["proposalCents"]')" = "780000" ] || fail "northgate proposal"
+[ "$(echo "$ng" | json '[o["status"] for o in d["objections"]]')" = "['repairable', 'unresolved', 'answered']" ] || fail "northgate objections"
+[ "$(echo "$ng" | json '[f["state"] for f in d["findings"] if f["kind"]=="missing_work_evidence"][0]')" = "missing" ] || fail "missing ticket"
+pass "second case: shortfall and refusal"
+
+revision=$(echo "$ng" | json 'd["revision"]')
+key=$(echo "$ng" | json '[f["key"] for f in d["findings"] if f["kind"]=="quantity_shortfall"][0]')
+decided=$(curl -sf -X POST -H 'content-type: application/json' \
+  -d "{\"findingKey\":\"$key\",\"decision\":\"accept\",\"expectedRevision\":$revision}" \
+  "$BASE/api/cases/northgate-mechanical/decisions")
+[ "$(echo "$decided" | json 'd["supportedCents"]')" = "780000" ] || fail "shortfall total"
+[ "$(echo "$decided" | json '[l["adjustmentCents"] for l in d["lines"] if l["id"]=="M1"][0]')" = "-90000" ] || fail "shortfall adjustment"
+[ "$(echo "$decided" | json '[l["removed"] for l in d["lines"] if l["id"]=="M1"][0]')" = "False" ] || fail "shortfall removed the line"
+pass "accept shortfall adjusts the line"
+
+curl -sf "$BASE/api/cases/northgate-mechanical/export" -o /tmp/extrawork-northgate.html
+grep -q '\$7,800.00' /tmp/extrawork-northgate.html || fail "northgate packet total"
+grep -q 'No signed ticket' /tmp/extrawork-northgate.html || fail "northgate refusal in packet"
+pass "second case packet"
+
+curl -sf -X POST "$BASE/api/cases/harbor-annex/reset" >/dev/null
+curl -sf -X POST "$BASE/api/cases/northgate-mechanical/reset" >/dev/null
 echo "E2E PASSED"

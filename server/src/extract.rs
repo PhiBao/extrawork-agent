@@ -19,6 +19,9 @@ pub fn classify(filename: &str, text: &str) -> Kind {
     if csv_like && head.starts_with("line_id,document,excerpt") {
         return Kind::EvidenceExtract;
     }
+    if name.contains("receipt") || head.starts_with("line_id,received_qty") {
+        return Kind::DeliveryReceipt;
+    }
     if csv_like && (head.starts_with("line_id,description") || name.contains("cost-export")) {
         return Kind::CostExport;
     }
@@ -144,6 +147,13 @@ mod tests {
         assert_eq!(
             classify("field-ticket.txt", include_str!("../../fixtures/harbor-annex/field-ticket.txt")),
             Kind::FieldTicket
+        );
+        assert_eq!(
+            classify(
+                "delivery-receipt.csv",
+                include_str!("../../fixtures/northgate-mechanical/delivery-receipt.csv")
+            ),
+            Kind::DeliveryReceipt
         );
     }
 

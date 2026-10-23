@@ -11,6 +11,7 @@ pub enum Kind {
     RateSheet,
     Directive,
     PriorBilling,
+    DeliveryReceipt,
     EvidenceExtract,
     Other,
 }
@@ -63,6 +64,8 @@ pub struct CostLine {
     pub role: Option<String>,
     pub duplicate: bool,
     pub removed: bool,
+    pub adjustment_cents: i64,
+    pub adjustment_note: Option<String>,
     pub excerpts: Vec<Span>,
 }
 
@@ -131,6 +134,8 @@ pub fn analyze(docs: &[Doc], extracts: &[ExtractRow], db_amounts: &[(String, i64
     let objections = objections_from(docs);
     let mut findings = Vec::new();
     findings.extend(duplicate_findings(&lines, docs, &objections));
+    findings.extend(quantity_findings(&lines, docs, &objections));
+    findings.extend(ticket_finding(docs, &objections));
     findings.extend(rate_findings(&lines, docs, &objections));
     findings.extend(scope_finding(docs, &objections));
     findings.extend(prior_finding(&lines, docs, &objections));
@@ -172,6 +177,10 @@ pub fn analyze(docs: &[Doc], extracts: &[ExtractRow], db_amounts: &[(String, i64
         if let Some(rate) = findings.iter().find(|f| f.kind == "missing_rate_approval" && f.decision.as_deref() == Some("apply_sheet_rate") && f.affected_line_ids.iter().any(|id| id == &line.id)) {
             line.amount_cents += rate.optional_delta_cents;
             line.rate_cents += rate.optional_delta_cents / line.quantity.parse::<i64>().unwrap_or(1);
+        }
+        if let Some(qty) = findings.iter().find(|f| f.kind == "quantity_shortfall" && f.decision.as_deref() == Some("accept") && f.affected_line_ids.iter().any(|id| id == &line.id)) {
+            line.adjustment_cents = qty.proposed_delta_cents;
+            line.adjustment_note = Some("Short shipment".into());
         }
     }
 
@@ -263,7 +272,11 @@ fn numbered_quote(line: &str) -> Option<String> {
 
 fn topic(quote: &str) -> &'static str {
     let q = quote.to_lowercase();
-    if q.contains("twice") || q.contains("duplicate") {
+    if q.contains("receipt") || q.contains("billed for") || q.contains("short-shipped") || q.contains("short shipment") {
+        "quantity"
+    } else if q.contains("ticket") {
+        "ticket"
+    } else if q.contains("twice") || q.contains("duplicate") {
         "duplicate"
     } else if q.contains("rate") || q.contains("approval") {
         "rate"
@@ -332,6 +345,142 @@ fn duplicate_findings(lines: &[CostLine], docs: &[Doc], objections: &[Objection]
     out
 }
 
+pub fn parse_receipt(text: &str) -> Result<Vec<(String, f64)>, String> {
+    let mut reader = csv::Reader::from_reader(text.as_bytes());
+    let mut rows = Vec::new();
+    for record in reader.records() {
+        let record = record.map_err(|e| e.to_string())?;
+        let id = record.get(0).unwrap_or("").trim().to_string();
+        let qty = record
+            .get(1)
+            .unwrap_or("")
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "The receipt has a non-numeric received quantity.".to_string())?;
+        if !id.is_empty() && qty >= 0.0 {
+            rows.push((id, qty));
+        }
+    }
+    Ok(rows)
+}
+
+fn trim_number(value: f64) -> String {
+    if (value.fract()).abs() < f64::EPSILON {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.2}")
+    }
+}
+
+fn quantity_findings(lines: &[CostLine], docs: &[Doc], objections: &[Objection]) -> Vec<Finding> {
+    let Some(receipt) = docs.iter().find(|d| d.kind == Kind::DeliveryReceipt) else {
+        return Vec::new();
+    };
+    let received = parse_receipt(&receipt.text).unwrap_or_default();
+    let objection_id = objections.iter().find(|o| o.topic == "quantity").map(|o| o.id.clone());
+    let mut out = Vec::new();
+    for line in lines {
+        let Some((_, received_qty)) = received.iter().find(|(id, _)| id == &line.id) else {
+            continue;
+        };
+        let billed = line.quantity.parse::<f64>().unwrap_or(0.0);
+        if billed <= 0.0 || billed <= *received_qty {
+            continue;
+        }
+        let short = billed - *received_qty;
+        let delta = if line.rate_cents != 0 {
+            -((short * line.rate_cents as f64).round() as i64)
+        } else if line.amount_cents != 0 {
+            -((short / billed * line.amount_cents as f64).round() as i64)
+        } else {
+            0
+        };
+        let receipt_quote = receipt
+            .text
+            .lines()
+            .find(|row| row.split(',').next() == Some(line.id.as_str()))
+            .map(|row| row.trim().to_string())
+            .unwrap_or_else(|| line.id.clone());
+        let mut spans = vec![make_span(receipt, &receipt_quote)];
+        if let Some(export) = docs.iter().find(|d| d.kind == Kind::CostExport) {
+            spans.push(make_span(export, &line.id));
+        }
+        out.push(Finding {
+            key: format!("qty:{}", line.id),
+            objection_id: objection_id.clone(),
+            kind: "quantity_shortfall".into(),
+            title: format!(
+                "Receipt shows {} of {} billed units",
+                trim_number(*received_qty),
+                trim_number(billed)
+            ),
+            explanation: {
+                let unit = if line.unit.eq_ignore_ascii_case("each") { "units" } else { line.unit.as_str() };
+                format!(
+                    "The cost export bills {} {} of {}. The signed receipt records {}. {} {} are not supported by this receipt; remove the difference unless another receipt covers them.",
+                    trim_number(billed),
+                    unit,
+                    line.description,
+                    trim_number(*received_qty),
+                    trim_number(short),
+                    unit
+                )
+            },
+            state: "supported".into(),
+            proposed_delta_cents: delta,
+            optional_delta_cents: 0,
+            requires_decision: true,
+            decision: None,
+            reservation: None,
+            affected_line_ids: vec![line.id.clone()],
+            spans,
+        });
+    }
+    out
+}
+
+fn ticket_finding(docs: &[Doc], objections: &[Objection]) -> Vec<Finding> {
+    let Some(objection) = objections.iter().find(|o| o.topic == "ticket") else {
+        return Vec::new();
+    };
+    if docs.iter().any(|d| d.kind == Kind::FieldTicket) {
+        return Vec::new();
+    }
+    let directive = docs.iter().find(|d| d.kind == Kind::Directive);
+    let spans = directive
+        .and_then(|doc| {
+            let sentences: Vec<&str> = doc
+                .text
+                .split(['.', '\n'])
+                .map(str::trim)
+                .filter(|sentence| !sentence.is_empty() && !sentence.to_lowercase().starts_with("subject:"))
+                .collect();
+            sentences
+                .iter()
+                .find(|sentence| sentence.to_lowercase().contains("second crew"))
+                .or_else(|| sentences.iter().find(|sentence| sentence.to_lowercase().contains("saturday")))
+                .or_else(|| sentences.iter().find(|sentence| sentence.to_lowercase().contains("ticket")))
+                .map(|sentence| make_span(doc, sentence))
+        })
+        .into_iter()
+        .collect();
+    vec![Finding {
+        key: "ticket:request".into(),
+        objection_id: Some(objection.id.clone()),
+        kind: "missing_work_evidence".into(),
+        title: "No signed ticket for the second crew".into(),
+        explanation: "The direction asks for the crew, but no signed ticket is in the file. A message is not a timesheet. The request cannot treat those hours as fully supported until the ticket is supplied.".into(),
+        state: "missing".into(),
+        proposed_delta_cents: 0,
+        optional_delta_cents: 0,
+        requires_decision: false,
+        decision: None,
+        reservation: Some("Missing work evidence. Do not treat the request as fully supported.".into()),
+        affected_line_ids: Vec::new(),
+        spans,
+    }]
+}
+
 fn rate_findings(lines: &[CostLine], docs: &[Doc], objections: &[Objection]) -> Vec<Finding> {
     let rates = docs.iter().find(|d| d.kind == Kind::RateSheet).and_then(|d| parse_rate_sheet(&d.text).ok());
     let mut out = Vec::new();
@@ -385,9 +534,15 @@ fn rate_findings(lines: &[CostLine], docs: &[Doc], objections: &[Objection]) -> 
                     format_money(line.rate_cents),
                     format_money(sheet)
                 )
-            } else {
+            } else if ticket.is_some() {
                 format!(
                     "The sheet rate for {role} is {}. The request uses {}. The field ticket records hours and a signature. It does not state a rate, so it cannot close this objection.",
+                    format_money(sheet),
+                    format_money(line.rate_cents)
+                )
+            } else {
+                format!(
+                    "The sheet rate for {role} is {}. The request uses {}. No written approval of the higher rate is in the file.",
                     format_money(sheet),
                     format_money(line.rate_cents)
                 )
@@ -426,21 +581,57 @@ fn rate_findings(lines: &[CostLine], docs: &[Doc], objections: &[Objection]) -> 
     out
 }
 
+fn significant_tokens(text: &str) -> std::collections::BTreeSet<String> {
+    const STOP: &[&str] = &[
+        "excluded", "from", "base", "contract", "after", "hours", "premium", "labor", "lifts",
+        "shown", "drawing", "with", "that", "this", "will", "have", "been", "were", "their",
+        "there", "which", "while", "when", "where", "what", "about", "under", "over", "into",
+        "than", "then", "them", "they", "your", "ours", "also", "only", "more", "most", "such",
+        "some", "each", "very", "just", "should", "would", "could", "must", "does", "did",
+        "done", "because", "before", "between", "during", "through", "against", "above",
+        "below", "again", "further", "once", "here", "why", "how", "all", "any", "both", "few",
+        "other", "same", "too", "now", "not", "are", "was", "the", "and", "for", "you", "our",
+        "its", "his", "her", "she", "him", "who", "whom", "whose", "these", "those",
+    ];
+    text.to_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| word.len() >= 4 && !STOP.contains(word))
+        .map(|word| word.to_string())
+        .collect()
+}
+
 fn scope_finding(docs: &[Doc], objections: &[Objection]) -> Vec<Finding> {
     let Some(scope) = docs.iter().find(|d| d.kind == Kind::Scope) else { return Vec::new() };
     let Some(directive) = docs.iter().find(|d| d.kind == Kind::Directive) else { return Vec::new() };
-    let Some(exclusion) = sentence_containing(&scope.text, "excluded from the base contract") else { return Vec::new() };
-    let Some(direction) = sentence_containing(&directive.text, "relocate the temporary power") else { return Vec::new() };
-    let matches = exclusion.to_lowercase().contains("temporary power") && direction.to_lowercase().contains("temporary power");
-    if !matches {
+    let Some(exclusion) = sentence_containing(&scope.text, "excluded") else { return Vec::new() };
+    let excluded_tokens = significant_tokens(&exclusion);
+    let direction = directive
+        .text
+        .split(['.', '\n'])
+        .map(|sentence| sentence.trim().to_string())
+        .filter(|sentence| !sentence.is_empty())
+        .max_by_key(|sentence| {
+            significant_tokens(sentence)
+                .intersection(&excluded_tokens)
+                .count()
+        });
+    let Some(direction) = direction else { return Vec::new() };
+    let shared: Vec<String> = significant_tokens(&direction)
+        .intersection(&excluded_tokens)
+        .cloned()
+        .collect();
+    if shared.is_empty() {
         return Vec::new();
     }
+    let keys = shared.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
     vec![Finding {
         key: "scope:request".into(),
         objection_id: objections.iter().find(|o| o.topic == "scope").map(|o| o.id.clone()),
         kind: "outside_base_scope".into(),
         title: "The written direction matches an exclusion".into(),
-        explanation: "The base contract excludes temporary power relocation. Apex directed that relocation the night of the pour. The same email says the paperwork will be sorted later. That is not a price agreement.".into(),
+        explanation: format!(
+            "The base contract excludes this work, and the direction uses the same terms: {keys}. The direction is not a price agreement."
+        ),
         state: "supported".into(),
         proposed_delta_cents: 0,
         optional_delta_cents: 0,
@@ -521,7 +712,11 @@ fn tasks_from(findings: &[Finding]) -> Vec<RepairTask> {
         .filter(|f| f.state == "missing" && f.decision.as_deref() != Some("apply_sheet_rate"))
         .map(|f| RepairTask {
             id: format!("task-{}", f.key.replace(':', "-")),
-            title: "Ask Apex for written approval of the overtime rate, or decide to use the $125 sheet rate.".into(),
+            title: match f.kind.as_str() {
+                "missing_rate_approval" => "Request written rate approval, or apply the sheet rate.".into(),
+                "missing_work_evidence" => "Request the signed work ticket for the crew.".into(),
+                _ => "Request the missing record.".into(),
+            },
             status: if f.decision.as_deref() == Some("request_approval") { "requested" } else { "open" }.into(),
             finding_key: f.key.clone(),
         })
@@ -569,6 +764,8 @@ pub fn parse_cost_csv(text: &str) -> Result<Vec<CostLine>, String> {
             role,
             duplicate: false,
             removed: false,
+            adjustment_cents: 0,
+            adjustment_note: None,
             excerpts: Vec::new(),
         });
     }
@@ -725,8 +922,8 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn fixture(name: &str) -> Doc {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/harbor-annex").join(name);
+    fn fixture_in(case: &str, name: &str) -> Doc {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures").join(case).join(name);
         let text = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
         let bytes = text.as_bytes();
         Doc {
@@ -738,6 +935,10 @@ mod tests {
         }
     }
 
+    fn fixture(name: &str) -> Doc {
+        fixture_in("harbor-annex", name)
+    }
+
     fn harbor() -> Vec<Doc> {
         ["return-note.eml", "cost-export.csv", "invoice-902.txt", "invoice-441.txt", "field-ticket.txt", "base-scope.txt", "directive.eml", "rate-sheet.csv", "prior-billing.csv"]
             .into_iter()
@@ -745,8 +946,19 @@ mod tests {
             .collect()
     }
 
+    fn northgate() -> Vec<Doc> {
+        ["return-note.eml", "cost-export.csv", "delivery-receipt.csv", "base-scope.txt", "directive.eml", "rate-sheet.csv"]
+            .into_iter()
+            .map(|name| fixture_in("northgate-mechanical", name))
+            .collect()
+    }
+
     fn extracts() -> Vec<ExtractRow> {
         parse_extracts(include_str!("../../fixtures/harbor-annex/evidence-extracts.csv")).unwrap()
+    }
+
+    fn northgate_extracts() -> Vec<ExtractRow> {
+        parse_extracts(include_str!("../../fixtures/northgate-mechanical/evidence-extracts.csv")).unwrap()
     }
 
     #[test]
@@ -817,5 +1029,51 @@ mod tests {
     fn money_parser_rejects_hidden_fractions() {
         assert!(parse_money("10.005").is_err());
         assert_eq!(parse_money("$1,000.00").unwrap(), 100_000);
+    }
+
+    #[test]
+    fn receipt_parser_reads_line_quantities() {
+        let rows = parse_receipt("line_id,received_qty\nM1,10\n").unwrap();
+        assert_eq!(rows, vec![("M1".to_string(), 10.0)]);
+    }
+
+    #[test]
+    fn northgate_shortfall_and_missing_ticket() {
+        let docs = northgate();
+        let lines = parse_cost_csv(&docs.iter().find(|d| d.filename == "cost-export.csv").unwrap().text).unwrap();
+        let db: Vec<_> = lines.iter().map(|l| (l.id.clone(), l.amount_cents)).collect();
+        let analysis = analyze(&docs, &northgate_extracts(), &db, &[]);
+        assert_eq!(analysis.submitted_cents, 870_000);
+        assert_eq!(analysis.supported_cents, 870_000);
+        assert_eq!(analysis.proposal_cents, 780_000);
+        assert_eq!(analysis.workflow, "needs_review");
+        let qty = analysis.findings.iter().find(|f| f.kind == "quantity_shortfall").unwrap();
+        assert_eq!(qty.state, "supported");
+        assert_eq!(qty.proposed_delta_cents, -90_000);
+        assert_eq!(qty.affected_line_ids, vec!["M1"]);
+        assert!(qty.spans.iter().all(|s| docs.iter().find(|d| d.id == s.document_id).unwrap().text.contains(&s.quote)));
+        let ticket = analysis.findings.iter().find(|f| f.kind == "missing_work_evidence").unwrap();
+        assert_eq!(ticket.state, "missing");
+        assert_eq!(analysis.objections.iter().find(|o| o.topic == "quantity").unwrap().status, "repairable");
+        assert_eq!(analysis.objections.iter().find(|o| o.topic == "ticket").unwrap().status, "unresolved");
+        assert_eq!(analysis.objections.iter().find(|o| o.topic == "scope").unwrap().status, "answered");
+        assert!(analysis.lines.iter().all(|l| !l.excerpts.is_empty()));
+        assert_eq!(analysis.tasks.len(), 2);
+    }
+
+    #[test]
+    fn accepting_the_shortfall_adjusts_the_line_without_removing_it() {
+        let docs = northgate();
+        let lines = parse_cost_csv(&docs.iter().find(|d| d.filename == "cost-export.csv").unwrap().text).unwrap();
+        let db: Vec<_> = lines.iter().map(|l| (l.id.clone(), l.amount_cents)).collect();
+        let first = analyze(&docs, &northgate_extracts(), &db, &[]);
+        let key = first.findings.iter().find(|f| f.kind == "quantity_shortfall").unwrap().key.clone();
+        let second = analyze(&docs, &northgate_extracts(), &db, &[Decision { finding_key: key, decision: "accept".into() }]);
+        assert_eq!(second.supported_cents, 780_000);
+        assert_eq!(second.billing_posture, "not_authorized");
+        let m1 = second.lines.iter().find(|l| l.id == "M1").unwrap();
+        assert_eq!(m1.amount_cents, 540_000);
+        assert_eq!(m1.adjustment_cents, -90_000);
+        assert!(!m1.removed);
     }
 }

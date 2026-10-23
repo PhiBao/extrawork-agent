@@ -1,0 +1,5 @@
+line_id,description,category,quantity,unit,rate,amount,invoice,role
+M1,Valve package 2-inch,material,12,each,450.00,5400.00,,
+M2,Saturday crew labor,labor,8,hour,150.00,1200.00,,journeyman
+M3,Crane rental,equipment,1,day,1800.00,1800.00,,
+M4,Consumables,material,1,lot,300.00,300.00,,

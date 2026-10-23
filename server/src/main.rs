@@ -123,48 +123,104 @@ async fn migrate(db: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+const HARBOR_FILES: &[&str] = &[
+    "return-note.eml",
+    "cost-export.csv",
+    "invoice-902.txt",
+    "invoice-441.txt",
+    "field-ticket.txt",
+    "base-scope.txt",
+    "directive.eml",
+    "rate-sheet.csv",
+    "prior-billing.csv",
+];
+
+const NORTHGATE_FILES: &[&str] = &[
+    "return-note.eml",
+    "cost-export.csv",
+    "delivery-receipt.csv",
+    "base-scope.txt",
+    "directive.eml",
+    "rate-sheet.csv",
+];
+
+fn case_spec(id: &str) -> Option<(&'static str, &'static [&'static str], Value)> {
+    match id {
+        "harbor-annex" => Some((
+            "harbor-annex",
+            HARBOR_FILES,
+            json!({
+                "project": "Harbor Annex",
+                "requestNumber": "COR-184",
+                "contractor": "Northline Electrical",
+                "counterparty": "Apex Build",
+                "returnedOn": "2026-10-18",
+                "summary": "Temporary power relocation before the slab pour"
+            }),
+        )),
+        "northgate-mechanical" => Some((
+            "northgate-mechanical",
+            NORTHGATE_FILES,
+            json!({
+                "project": "Northgate Plant",
+                "requestNumber": "CHG-207",
+                "contractor": "Meridian Mechanical",
+                "counterparty": "Calder Industrial",
+                "returnedOn": "2026-10-21",
+                "summary": "Valve package and crane for the Northgate shutdown"
+            }),
+        )),
+        _ => None,
+    }
+}
+
 async fn seed_if_empty(app: &App) -> Result<(), Box<dyn std::error::Error>> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cases WHERE id = 'harbor-annex'").fetch_one(&app.db).await?;
-    if count == 0 {
-        reset_harbor(app).await?;
+    for id in ["harbor-annex", "northgate-mechanical"] {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cases WHERE id = $1")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await?;
+        if count == 0 {
+            reset_case_seed(app, id).await?;
+        }
     }
     Ok(())
 }
 
-async fn reset_harbor(app: &App) -> Result<(), Box<dyn std::error::Error>> {
-    let dir = app.root.join("fixtures/harbor-annex");
-    let names = ["return-note.eml", "cost-export.csv", "invoice-902.txt", "invoice-441.txt", "field-ticket.txt", "base-scope.txt", "directive.eml", "rate-sheet.csv", "prior-billing.csv"];
-    sqlx::query("DELETE FROM decisions WHERE case_id = 'harbor-annex'").execute(&app.db).await?;
-    sqlx::query("DELETE FROM documents WHERE case_id = 'harbor-annex'").execute(&app.db).await?;
-    sqlx::query("DELETE FROM project_lines WHERE case_id = 'harbor-annex'").execute(&app.db).await?;
-    sqlx::query("DELETE FROM case_extracts WHERE case_id = 'harbor-annex'").execute(&app.db).await?;
-    let meta = json!({
-        "project": "Harbor Annex",
-        "requestNumber": "COR-184",
-        "contractor": "Northline Electrical",
-        "counterparty": "Apex Build",
-        "returnedOn": "2026-10-18",
-        "summary": "Temporary power relocation before the slab pour"
-    });
-    sqlx::query("INSERT INTO cases (id, revision, synthetic, meta, proof) VALUES ('harbor-annex', 1, true, $1, '{}') ON CONFLICT (id) DO UPDATE SET revision = 1, synthetic = true, meta = $1, proof = '{}'")
+async fn reset_case_seed(app: &App, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let Some((dir_name, files, meta)) = case_spec(id) else {
+        return Err(format!("unknown case {id}").into());
+    };
+    let dir = app.root.join("fixtures").join(dir_name);
+    for table in ["decisions", "documents", "project_lines", "case_extracts"] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE case_id = $1"))
+            .bind(id)
+            .execute(&app.db)
+            .await?;
+    }
+    sqlx::query("INSERT INTO cases (id, revision, synthetic, meta, proof) VALUES ($1, 1, true, $2, '{}') ON CONFLICT (id) DO UPDATE SET revision = 1, synthetic = true, meta = $2, proof = '{}'")
+        .bind(id)
         .bind(meta)
         .execute(&app.db)
         .await?;
-    for name in names {
+    for name in files {
         let bytes = std::fs::read(dir.join(name))?;
         let doc = parse_upload(name, &bytes).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-        insert_doc(app, "harbor-annex", &doc).await?;
+        insert_doc(app, id, &doc).await?;
     }
-    seed_evidence(app, "harbor-annex")?;
-    sync_project_lines(app, "harbor-annex").await?;
-    let _ = project_world(app, "harbor-annex").await;
+    seed_evidence(app, id, dir_name)?;
+    sync_project_lines(app, id).await?;
+    let _ = project_world(app, id).await;
     Ok(())
 }
 
 async fn insert_doc(app: &App, case_id: &str, doc: &Doc) -> Result<(), sqlx::Error> {
     let kind = serde_json::to_value(doc.kind).unwrap().as_str().unwrap().to_string();
+    // Content hashes are global; the stored id must be case-scoped so two cases can
+    // legitimately contain the same file without one silently disappearing.
+    let scoped_id = format!("{case_id}-{}", doc.id);
     sqlx::query("INSERT INTO documents (id, case_id, filename, kind, sha256, body) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING")
-        .bind(&doc.id)
+        .bind(&scoped_id)
         .bind(case_id)
         .bind(&doc.filename)
         .bind(kind)
@@ -298,14 +354,15 @@ fn evidence_text(app: &App, case_id: &str) -> String {
     if case_path.exists() {
         return std::fs::read_to_string(case_path).unwrap_or_default();
     }
-    std::fs::read_to_string(app.root.join("fixtures/harbor-annex/evidence-extracts.csv")).unwrap_or_default()
+    let dir = case_spec(case_id).map(|(dir, _, _)| dir).unwrap_or("harbor-annex");
+    std::fs::read_to_string(app.root.join("fixtures").join(dir).join("evidence-extracts.csv")).unwrap_or_default()
 }
 
-fn seed_evidence(app: &App, case_id: &str) -> std::io::Result<()> {
+fn seed_evidence(app: &App, case_id: &str, dir_name: &str) -> std::io::Result<()> {
     let dir = app.root.join("data/evidence");
     std::fs::create_dir_all(&dir)?;
     let target = dir.join(format!("{case_id}.csv"));
-    let source = app.root.join("fixtures/harbor-annex/evidence-extracts.csv");
+    let source = app.root.join("fixtures").join(dir_name).join("evidence-extracts.csv");
     std::fs::copy(source, target)?;
     Ok(())
 }
@@ -428,10 +485,10 @@ async fn get_case(State(app): State<Arc<App>>, Path(id): Path<String>) -> Respon
 }
 
 async fn reset_case(State(app): State<Arc<App>>, Path(id): Path<String>) -> Response {
-    if id != "harbor-annex" {
+    if case_spec(&id).is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
-    if let Err(err) = reset_harbor(&app).await {
+    if let Err(err) = reset_case_seed(&app, &id).await {
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
     get_case(State(app), Path(id)).await
@@ -604,7 +661,8 @@ async fn project_world(app: &App, case_id: &str) -> Result<(), String> {
                     "requestId": query.request_id,
                     "totalCount": query.total_count,
                     "extractsUsed": rows.len(),
-                    "queryClosed": query.query_closed
+                    "queryClosed": query.query_closed,
+                    "sql": query.sql
                 });
             }
             Err(err) => {
@@ -704,41 +762,182 @@ async fn nemotron_status(app: &App, view: &Value) -> Value {
     }
 }
 
-fn render_packet(view: &Value) -> String {
-    let money = |cents: i64| {
-        let sign = if cents < 0 { "-" } else { "" };
-        format!("{sign}${}.{:02}", group_dollars(cents.abs() / 100), cents.abs() % 100)
+fn packet_money(cents: i64) -> String {
+    let sign = if cents < 0 { "-" } else { "" };
+    format!("{sign}${}.{:02}", group_dollars(cents.abs() / 100), cents.abs() % 100)
+}
+
+fn packet_citations(item: &Value) -> String {
+    let Some(spans) = item.get("spans").and_then(|v| v.as_array()) else {
+        return String::new();
     };
+    if spans.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("<ul class=\"cites\">");
+    for span in spans {
+        out.push_str(&format!(
+            "<li><b>{}</b><q>{}</q></li>",
+            esc(span["filename"].as_str().unwrap_or("")),
+            esc(span["quote"].as_str().unwrap_or(""))
+        ));
+    }
+    out.push_str("</ul>");
+    out
+}
+
+fn packet_finding(item: &Value) -> String {
+    let reservation = item["reservation"].as_str().unwrap_or("");
+    format!(
+        "<div class=\"finding\"><p class=\"state {state}\">{state}</p><h3>{title}</h3><p>{explanation}</p>{reserve}{cites}</div>",
+        state = esc(item["state"].as_str().unwrap_or("")),
+        title = esc(item["title"].as_str().unwrap_or("")),
+        explanation = esc(item["explanation"].as_str().unwrap_or("")),
+        reserve = if reservation.is_empty() {
+            String::new()
+        } else {
+            format!("<p class=\"reserve\">{}</p>", esc(reservation))
+        },
+        cites = packet_citations(item)
+    )
+}
+
+fn render_packet(view: &Value) -> String {
     let submitted = view["submittedCents"].as_i64().unwrap_or(0);
     let supported = view["supportedCents"].as_i64().unwrap_or(0);
     let proposal = view["proposalCents"].as_i64().unwrap_or(0);
-    let mut findings = String::new();
-    if let Some(items) = view.get("findings").and_then(|v| v.as_array()) {
-        for item in items {
-            findings.push_str(&format!(
-                "<section><h2>{}</h2><p class=\"state\">{}</p><p>{}</p><p class=\"reserve\">{}</p></section>",
-                esc(item["title"].as_str().unwrap_or("")),
-                esc(item["state"].as_str().unwrap_or("")),
-                esc(item["explanation"].as_str().unwrap_or("")),
-                esc(item["reservation"].as_str().unwrap_or(""))
+    let request = view["requestNumber"].as_str().unwrap_or("Request");
+    let project = view["project"].as_str().unwrap_or("");
+    let contractor = view["contractor"].as_str().unwrap_or("");
+    let counterparty = view["counterparty"].as_str().unwrap_or("");
+    let returned = view["returnedOn"].as_str().unwrap_or("");
+    let summary = view["summary"].as_str().unwrap_or("");
+    let workflow = view["workflow"].as_str().unwrap_or("").replace('_', " ");
+
+    let findings = view.get("findings").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let objections = view.get("objections").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let mut sections = String::new();
+    for objection in &objections {
+        let id = objection["id"].as_str().unwrap_or("");
+        let related: Vec<&Value> = findings
+            .iter()
+            .filter(|item| item["objectionId"].as_str() == Some(id))
+            .collect();
+        if related.is_empty() {
+            continue;
+        }
+        sections.push_str(&format!(
+            "<section><p class=\"num\">0{}</p><blockquote>{}</blockquote>{}</section>",
+            objection["index"].as_i64().unwrap_or(0),
+            esc(objection["quote"].as_str().unwrap_or("")),
+            related.iter().map(|item| packet_finding(item)).collect::<String>()
+        ));
+    }
+    let unlinked: Vec<&Value> = findings
+        .iter()
+        .filter(|item| item["objectionId"].is_null())
+        .collect();
+    if !unlinked.is_empty() {
+        sections.push_str("<section><p class=\"num\">Also checked</p>");
+        sections.push_str(&unlinked.iter().map(|item| packet_finding(item)).collect::<String>());
+        sections.push_str("</section>");
+    }
+
+    let mut lines = String::new();
+    if let Some(items) = view.get("lines").and_then(|v| v.as_array()) {
+        for line in items {
+            let adjustment = line["adjustmentCents"].as_i64().unwrap_or(0);
+            lines.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{} {}</td><td class=\"right\">{}{}</td></tr>",
+                esc(line["id"].as_str().unwrap_or("")),
+                esc(line["description"].as_str().unwrap_or("")),
+                esc(line["quantity"].as_str().unwrap_or("")),
+                esc(line["unit"].as_str().unwrap_or("")),
+                packet_money(line["amountCents"].as_i64().unwrap_or(0)),
+                if adjustment == 0 {
+                    String::new()
+                } else {
+                    format!("<span class=\"adjust\">{} unsupported</span>", packet_money(-adjustment))
+                }
             ));
         }
     }
+
+    let mut sources = String::new();
+    if let Some(items) = view.get("documents").and_then(|v| v.as_array()) {
+        for doc in items {
+            let hash = doc["sha256"].as_str().unwrap_or("");
+            sources.push_str(&format!(
+                "<li><b>{}</b><span>{}</span></li>",
+                esc(doc["filename"].as_str().unwrap_or("")),
+                esc(hash.get(..12).unwrap_or(hash))
+            ));
+        }
+    }
+
     format!(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><title>COR-184 repair packet</title>
-        <style>body{{margin:0;background:#f3eee4;color:#1c211e;font:16px/1.5 "Source Sans 3", "Segoe UI", sans-serif}}main{{max-width:760px;margin:0 auto;padding:48px 24px}}h1{{font-family:Georgia, serif;font-weight:500;font-size:42px;line-height:1.05;margin:8px 0 12px}}.banner{{border-top:1px solid #9d3b28;border-bottom:1px solid #9d3b28;padding:8px 0;color:#9d3b28;letter-spacing:.08em;text-transform:uppercase;font-size:12px}}dl{{display:grid;grid-template-columns:180px 1fr;gap:6px 16px}}.state{{text-transform:uppercase;letter-spacing:.08em;font-size:12px;color:#3e4741}}section{{border-top:1px solid #d8cfc0;padding:16px 0}}.reserve{{color:#9d3b28}}</style></head>
-        <body><main><p class="banner">Synthetic records · not a billing approval · not money recovered</p>
-        <p>Northline Electrical to Apex Build</p><h1>COR-184 repair</h1>
-        <p>{summary}</p>
-        <dl><dt>Submitted</dt><dd>{submitted}</dd><dt>Supported after review</dt><dd>{supported}</dd><dt>If the open correction is accepted</dt><dd>{proposal}</dd><dt>Billing posture</dt><dd>Not authorized</dd></dl>
-        {findings}
-        <p>A direction to perform work is not an approval of price. A signed field ticket is not a rate agreement. This packet is for contractor review.</p>
-        </main></body></html>"#,
-        summary = esc(view["summary"].as_str().unwrap_or("")),
-        submitted = money(submitted),
-        supported = money(supported),
-        proposal = money(proposal),
-        findings = findings
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{request} repair packet</title>
+<style>
+:root{{--paper:#f3eee4;--sheet:#fffdf8;--ink:#1c211e;--muted:#3e4741;--line:#d8cfc0;--accent:#9d3b28;--ok:#1e5c44}}
+*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 "Source Sans 3","Segoe UI",sans-serif}}
+main{{max-width:820px;margin:0 auto;padding:56px 40px 72px}}
+.eyebrow{{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}}
+h1{{font-family:Georgia,serif;font-weight:500;font-size:46px;line-height:1;letter-spacing:-.02em;margin:6px 0 12px}}
+h2{{font-size:12px;letter-spacing:.12em;text-transform:uppercase;margin:34px 0 10px}}
+h3{{font-family:Georgia,serif;font-weight:500;font-size:22px;line-height:1.15;margin:6px 0}}
+.banner{{border-top:1px solid var(--accent);border-bottom:1px solid var(--accent);padding:8px 0;color:var(--accent);letter-spacing:.08em;text-transform:uppercase;font-size:11px}}
+.totals{{width:100%;border-collapse:collapse;margin:22px 0 6px}}
+.totals td{{padding:10px 8px;border-top:1px solid var(--line);vertical-align:top}}
+.totals .label{{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}}
+.totals .value{{font-size:26px;font-variant-numeric:tabular-nums}}
+section{{border-top:1px solid var(--line);padding:18px 0 4px;margin-top:22px}}
+.num{{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 4px}}
+blockquote{{font-family:Georgia,serif;font-size:21px;line-height:1.3;margin:0 0 12px;padding-left:12px;border-left:2px solid var(--ink)}}
+.finding{{padding:12px 0;border-top:1px dotted var(--line)}}
+.state{{font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin:0;color:var(--muted)}}
+.state.supported{{color:var(--ok)}}.state.missing,.state.contradicted{{color:var(--accent)}}.state.ambiguous{{color:#8a5a12}}
+.reserve{{color:var(--accent);font-size:14px}}
+.cites{{list-style:none;padding:0;margin:8px 0 0;font-size:13px;color:var(--muted)}}
+.cites li{{padding:4px 0}}.cites b{{color:var(--ink);font-weight:600;margin-right:6px}}.cites q{{quotes:"“" "”"}}
+table.costs{{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}}
+table.costs th,table.costs td{{text-align:left;padding:8px 6px;border-top:1px solid var(--line);vertical-align:top}}
+table.costs th{{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}}
+.right{{text-align:right}}.adjust{{display:block;font-size:11px;color:var(--accent)}}
+.sources{{list-style:none;padding:0;font-size:13px;color:var(--muted)}}.sources li{{display:flex;justify-content:space-between;gap:16px;padding:4px 0;border-top:1px dotted var(--line)}}.sources b{{color:var(--ink)}}
+footer{{margin-top:36px;border-top:1px solid var(--ink);padding-top:14px;font-size:13px;color:var(--muted)}}
+@media print{{body{{background:#fff}}main{{padding:24px}}}}
+</style></head><body><main>
+<p class="banner">Synthetic records · prepared for contractor review · not a billing approval · no money recovered</p>
+<p class="eyebrow">{contractor} → {counterparty} · returned {returned} · {workflow}</p>
+<h1>{request}: {project}</h1>
+<p>{summary}</p>
+<table class="totals"><tr>
+<td><div class="label">Submitted</div><div class="value">{submitted}</div></td>
+<td><div class="label">Supported after review</div><div class="value">{supported}</div></td>
+<td><div class="label">If open corrections are accepted</div><div class="value">{proposal}</div></td>
+<td><div class="label">Billing posture</div><div class="value">Not authorized</div></td>
+</tr></table>
+<h2>Objections and findings</h2>
+{sections}
+<h2>Cost lines</h2>
+<table class="costs"><thead><tr><th>Line</th><th>Description</th><th>Quantity</th><th class="right">Amount</th></tr></thead><tbody>{lines}</tbody></table>
+<h2>Sources</h2>
+<ul class="sources">{sources}</ul>
+<footer>A direction to perform work is not an approval of price. A signed field ticket is not a rate agreement. This packet prepares a resubmission; it does not authorize billing.</footer>
+</main></body></html>"#,
+        request = esc(request),
+        project = esc(project),
+        contractor = esc(contractor),
+        counterparty = esc(counterparty),
+        returned = esc(returned),
+        workflow = esc(&workflow),
+        summary = esc(summary),
+        submitted = packet_money(submitted),
+        supported = packet_money(supported),
+        proposal = packet_money(proposal),
+        sections = sections,
+        lines = lines,
+        sources = sources
     )
 }
 
